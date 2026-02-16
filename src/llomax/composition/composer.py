@@ -1,3 +1,5 @@
+"""Collage composition: arranges visual elements onto a canvas."""
+
 from __future__ import annotations
 
 import random
@@ -11,7 +13,17 @@ def compose(
     elements: list[AnalysisResult],
     canvas_size: tuple[int, int] = (1024, 1024),
 ) -> CollageOutput:
-    """Place each element at a random position on a white canvas."""
+    """Place each element at a random position on a white canvas.
+
+    Elements that are larger than the canvas are pinned to (0, 0).
+
+    Args:
+        elements: Visual elements to place on the canvas.
+        canvas_size: ``(width, height)`` in pixels.
+
+    Returns:
+        A ``CollageOutput`` with the composed image and dimensions.
+    """
     width, height = canvas_size
     canvas = Image.new("RGB", (width, height), "white")
 

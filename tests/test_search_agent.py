@@ -6,21 +6,15 @@ from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-import pytest
 from PIL import Image
 
 from mcp.types import TextContent
 
 from llomax.models import SearchResult
-from llomax.search.agent import (
-    MAX_AGENT_TURNS,
-    SearchAgent,
-    _download_thumbnails,
-    _forward_tool_calls,
-    _mcp_tools_to_anthropic,
-    _parse_search_results,
-    _run_agent_loop,
-)
+from llomax.search.agent import MAX_AGENT_TURNS, SearchAgent, run_agent_loop
+from llomax.search.mcp import forward_tool_calls, mcp_tools_to_anthropic
+from llomax.search.parsing import parse_search_results
+from llomax.search.thumbnails import download_thumbnails
 
 
 # ---------------------------------------------------------------------------
@@ -44,17 +38,17 @@ class TestParseSearchResults:
                 "details_url": "https://archive.org/details/img2",
             },
         ])
-        results = _parse_search_results(raw)
+        results = parse_search_results(raw)
         assert len(results) == 2
         assert results[0].identifier == "img1"
         assert results[1].title == "Mountains"
 
     def test_empty_list(self):
-        assert _parse_search_results("[]") == []
+        assert parse_search_results("[]") == []
 
     def test_missing_fields_default_to_empty_string(self):
         raw = json.dumps([{"identifier": "x"}])
-        results = _parse_search_results(raw)
+        results = parse_search_results(raw)
         assert len(results) == 1
         assert results[0].title == ""
         assert results[0].thumbnail_url == ""
@@ -62,16 +56,16 @@ class TestParseSearchResults:
 
     def test_items_without_identifier_are_skipped(self):
         raw = json.dumps([{"title": "No ID"}, {"identifier": "ok", "title": "Has ID"}])
-        results = _parse_search_results(raw)
+        results = parse_search_results(raw)
         assert len(results) == 1
         assert results[0].identifier == "ok"
 
     def test_non_list_returns_empty(self):
-        assert _parse_search_results('{"not": "a list"}') == []
+        assert parse_search_results('{"not": "a list"}') == []
 
     def test_non_dict_items_are_skipped(self):
         raw = json.dumps(["just_a_string", {"identifier": "ok"}])
-        results = _parse_search_results(raw)
+        results = parse_search_results(raw)
         assert len(results) == 1
 
 
@@ -95,7 +89,7 @@ class TestMcpToolsToAnthropic:
                 inputSchema={"type": "object", "properties": {}},
             ),
         ]
-        result = _mcp_tools_to_anthropic(tools)
+        result = mcp_tools_to_anthropic(tools)
         assert len(result) == 2
         assert result[0] == {
             "name": "search_images_tool",
@@ -131,14 +125,14 @@ class TestDownloadThumbnails:
             )
         ]
 
-        with patch("llomax.search.agent.httpx.AsyncClient") as mock_client_cls:
+        with patch("llomax.search.thumbnails.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(return_value=mock_response)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            await _download_thumbnails(results)
+            await download_thumbnails(results)
 
         assert results[0].image is not None
 
@@ -152,14 +146,14 @@ class TestDownloadThumbnails:
             )
         ]
 
-        with patch("llomax.search.agent.httpx.AsyncClient") as mock_client_cls:
+        with patch("llomax.search.thumbnails.httpx.AsyncClient") as mock_client_cls:
             mock_client = AsyncMock()
             mock_client.get = AsyncMock(side_effect=httpx.HTTPError("fail"))
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            await _download_thumbnails(results)
+            await download_thumbnails(results)
 
         assert results[0].image is None
 
@@ -167,8 +161,7 @@ class TestDownloadThumbnails:
         results = [
             SearchResult(identifier="no_url", title="No URL", thumbnail_url="", details_url="")
         ]
-        # Should not raise — simply skips
-        await _download_thumbnails(results)
+        await download_thumbnails(results)
         assert results[0].image is None
 
 
@@ -223,7 +216,7 @@ _FAKE_MCP_TOOLS = [
 
 
 # ---------------------------------------------------------------------------
-# _forward_tool_calls tests
+# forward_tool_calls tests
 # ---------------------------------------------------------------------------
 
 
@@ -242,7 +235,7 @@ class TestForwardToolCalls:
         block.input = {"query": "test"}
 
         results_by_id: dict[str, SearchResult] = {}
-        tool_results = await _forward_tool_calls(mock_session, [block], results_by_id)
+        tool_results = await forward_tool_calls(mock_session, [block], results_by_id)
 
         assert len(tool_results) == 1
         assert tool_results[0]["tool_use_id"] == "t1"
@@ -254,7 +247,7 @@ class TestForwardToolCalls:
 
         mock_session = AsyncMock()
         results_by_id: dict[str, SearchResult] = {}
-        tool_results = await _forward_tool_calls(mock_session, [text_block], results_by_id)
+        tool_results = await forward_tool_calls(mock_session, [text_block], results_by_id)
 
         assert tool_results == []
         mock_session.call_tool.assert_not_called()
@@ -272,13 +265,13 @@ class TestForwardToolCalls:
         block.input = {}
 
         results_by_id: dict[str, SearchResult] = {}
-        await _forward_tool_calls(mock_session, [block], results_by_id)
+        await forward_tool_calls(mock_session, [block], results_by_id)
 
         assert results_by_id == {}
 
 
 # ---------------------------------------------------------------------------
-# _run_agent_loop tests
+# run_agent_loop tests
 # ---------------------------------------------------------------------------
 
 
@@ -298,8 +291,8 @@ class TestRunAgentLoop:
             ]
         )
 
-        tools = _mcp_tools_to_anthropic(_FAKE_MCP_TOOLS)
-        results = await _run_agent_loop(mock_client, "model", tools, mock_session, "prompt")
+        tools = mcp_tools_to_anthropic(_FAKE_MCP_TOOLS)
+        results = await run_agent_loop(mock_client, "model", tools, mock_session, "prompt")
 
         assert "r1" in results
         assert mock_client.messages.create.call_count == 2
@@ -318,8 +311,8 @@ class TestRunAgentLoop:
             )
         )
 
-        tools = _mcp_tools_to_anthropic(_FAKE_MCP_TOOLS)
-        results = await _run_agent_loop(mock_client, "model", tools, mock_session, "prompt")
+        tools = mcp_tools_to_anthropic(_FAKE_MCP_TOOLS)
+        results = await run_agent_loop(mock_client, "model", tools, mock_session, "prompt")
 
         assert mock_client.messages.create.call_count == MAX_AGENT_TURNS
         assert len(results) >= 1
@@ -330,7 +323,7 @@ class TestRunAgentLoop:
 # ---------------------------------------------------------------------------
 
 
-class TestAgentLoop:
+class TestSearchAgent:
     async def test_single_turn(self):
         """One tool call then end_turn — returns parsed results."""
         search_json = json.dumps([
@@ -353,9 +346,9 @@ class TestAgentLoop:
 
         agent = SearchAgent(anthropic_client=mock_anthropic)
 
-        with patch("llomax.search.agent.stdio_client") as mock_stdio, \
-             patch("llomax.search.agent.ClientSession") as mock_cs_cls, \
-             patch("llomax.search.agent._download_thumbnails", new_callable=AsyncMock):
+        with patch("llomax.search.mcp.stdio_client") as mock_stdio, \
+             patch("llomax.search.mcp.ClientSession") as mock_cs_cls, \
+             patch("llomax.search.thumbnails.download_thumbnails", new_callable=AsyncMock):
             mock_stdio.return_value.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
             mock_stdio.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_cs_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -399,9 +392,9 @@ class TestAgentLoop:
 
         agent = SearchAgent(anthropic_client=mock_anthropic)
 
-        with patch("llomax.search.agent.stdio_client") as mock_stdio, \
-             patch("llomax.search.agent.ClientSession") as mock_cs_cls, \
-             patch("llomax.search.agent._download_thumbnails", new_callable=AsyncMock):
+        with patch("llomax.search.mcp.stdio_client") as mock_stdio, \
+             patch("llomax.search.mcp.ClientSession") as mock_cs_cls, \
+             patch("llomax.search.thumbnails.download_thumbnails", new_callable=AsyncMock):
             mock_stdio.return_value.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
             mock_stdio.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_cs_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -412,7 +405,6 @@ class TestAgentLoop:
         identifiers = [r.identifier for r in results]
         assert len(identifiers) == 3
         assert identifiers.count("dup") == 1
-        # First occurrence wins
         dup_result = next(r for r in results if r.identifier == "dup")
         assert dup_result.title == "First"
 
@@ -428,7 +420,6 @@ class TestAgentLoop:
         mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
         mock_session.call_tool = AsyncMock(return_value=_make_mcp_tool_result(search_json))
 
-        # Always returns tool_use, never end_turn
         mock_anthropic = AsyncMock()
         mock_anthropic.messages.create = AsyncMock(
             return_value=_make_tool_use_response(
@@ -438,9 +429,9 @@ class TestAgentLoop:
 
         agent = SearchAgent(anthropic_client=mock_anthropic)
 
-        with patch("llomax.search.agent.stdio_client") as mock_stdio, \
-             patch("llomax.search.agent.ClientSession") as mock_cs_cls, \
-             patch("llomax.search.agent._download_thumbnails", new_callable=AsyncMock):
+        with patch("llomax.search.mcp.stdio_client") as mock_stdio, \
+             patch("llomax.search.mcp.ClientSession") as mock_cs_cls, \
+             patch("llomax.search.thumbnails.download_thumbnails", new_callable=AsyncMock):
             mock_stdio.return_value.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
             mock_stdio.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_cs_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -449,5 +440,4 @@ class TestAgentLoop:
             results = await agent.search("infinite loop")
 
         assert mock_anthropic.messages.create.call_count == MAX_AGENT_TURNS
-        # Still returns collected results
         assert len(results) >= 1
