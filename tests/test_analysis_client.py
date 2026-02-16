@@ -46,13 +46,15 @@ async def test_placeholder_preserves_images(sample_results):
 
 async def test_placeholder_skips_results_without_image():
     client = PlaceholderAnalysisClient()
-    results = await client.analyze([
-        SearchResult(
-            identifier="no_img",
-            title="No Image",
-            thumbnail_url="",
-            details_url="",
-            image=None,
-        ),
-    ])
+    results = await client.analyze(
+        [
+            SearchResult(
+                identifier="no_img",
+                title="No Image",
+                thumbnail_url="",
+                details_url="",
+                image=None,
+            ),
+        ]
+    )
     assert results == []

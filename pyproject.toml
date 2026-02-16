@@ -21,4 +21,12 @@ packages = ["src/llomax"]
 asyncio_mode = "auto"
 
 [dependency-groups]
-dev = ["pytest", "pytest-asyncio"]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "ruff>=0.15.1",
+]
+
+[tool.ruff]
+line-length = 99
+

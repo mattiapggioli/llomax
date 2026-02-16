@@ -23,7 +23,9 @@ class Pipeline:
         self,
         search_agent: SearchAgent,
         analysis_client: AnalysisClient,
-        compose_fn: Callable[[list[AnalysisResult], tuple[int, int]], CollageOutput] = default_compose,
+        compose_fn: Callable[
+            [list[AnalysisResult], tuple[int, int]], CollageOutput
+        ] = default_compose,
     ) -> None:
         self.search_agent = search_agent
         self.analysis_client = analysis_client

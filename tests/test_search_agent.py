@@ -24,20 +24,22 @@ from llomax.search.thumbnails import download_thumbnails
 
 class TestParseSearchResults:
     def test_basic_parsing(self):
-        raw = json.dumps([
-            {
-                "identifier": "img1",
-                "title": "Sunset",
-                "thumbnail_url": "https://archive.org/services/img/img1",
-                "details_url": "https://archive.org/details/img1",
-            },
-            {
-                "identifier": "img2",
-                "title": "Mountains",
-                "thumbnail_url": "https://archive.org/services/img/img2",
-                "details_url": "https://archive.org/details/img2",
-            },
-        ])
+        raw = json.dumps(
+            [
+                {
+                    "identifier": "img1",
+                    "title": "Sunset",
+                    "thumbnail_url": "https://archive.org/services/img/img1",
+                    "details_url": "https://archive.org/details/img1",
+                },
+                {
+                    "identifier": "img2",
+                    "title": "Mountains",
+                    "thumbnail_url": "https://archive.org/services/img/img2",
+                    "details_url": "https://archive.org/details/img2",
+                },
+            ]
+        )
         results = parse_search_results(raw)
         assert len(results) == 2
         assert results[0].identifier == "img1"
@@ -222,9 +224,11 @@ _FAKE_MCP_TOOLS = [
 
 class TestForwardToolCalls:
     async def test_forwards_tool_use_blocks(self):
-        search_json = json.dumps([
-            {"identifier": "a1", "title": "A", "thumbnail_url": "", "details_url": ""},
-        ])
+        search_json = json.dumps(
+            [
+                {"identifier": "a1", "title": "A", "thumbnail_url": "", "details_url": ""},
+            ]
+        )
         mock_session = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=_make_mcp_tool_result(search_json))
 
@@ -277,16 +281,20 @@ class TestForwardToolCalls:
 
 class TestRunAgentLoop:
     async def test_returns_results_on_end_turn(self):
-        search_json = json.dumps([
-            {"identifier": "r1", "title": "R", "thumbnail_url": "", "details_url": ""},
-        ])
+        search_json = json.dumps(
+            [
+                {"identifier": "r1", "title": "R", "thumbnail_url": "", "details_url": ""},
+            ]
+        )
         mock_session = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=_make_mcp_tool_result(search_json))
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(
             side_effect=[
-                _make_tool_use_response([{"id": "t1", "name": "search_images_tool", "input": {"query": "q"}}]),
+                _make_tool_use_response(
+                    [{"id": "t1", "name": "search_images_tool", "input": {"query": "q"}}]
+                ),
                 _make_end_turn_response(),
             ]
         )
@@ -298,9 +306,11 @@ class TestRunAgentLoop:
         assert mock_client.messages.create.call_count == 2
 
     async def test_caps_at_max_turns(self):
-        search_json = json.dumps([
-            {"identifier": "x", "title": "X", "thumbnail_url": "", "details_url": ""},
-        ])
+        search_json = json.dumps(
+            [
+                {"identifier": "x", "title": "X", "thumbnail_url": "", "details_url": ""},
+            ]
+        )
         mock_session = AsyncMock()
         mock_session.call_tool = AsyncMock(return_value=_make_mcp_tool_result(search_json))
 
@@ -326,9 +336,16 @@ class TestRunAgentLoop:
 class TestSearchAgent:
     async def test_single_turn(self):
         """One tool call then end_turn — returns parsed results."""
-        search_json = json.dumps([
-            {"identifier": "a1", "title": "Alpha", "thumbnail_url": "http://x/a1", "details_url": ""},
-        ])
+        search_json = json.dumps(
+            [
+                {
+                    "identifier": "a1",
+                    "title": "Alpha",
+                    "thumbnail_url": "http://x/a1",
+                    "details_url": "",
+                },
+            ]
+        )
 
         mock_session = AsyncMock()
         mock_tools_result = MagicMock()
@@ -339,16 +356,20 @@ class TestSearchAgent:
         mock_anthropic = AsyncMock()
         mock_anthropic.messages.create = AsyncMock(
             side_effect=[
-                _make_tool_use_response([{"id": "t1", "name": "search_images_tool", "input": {"query": "alpha"}}]),
+                _make_tool_use_response(
+                    [{"id": "t1", "name": "search_images_tool", "input": {"query": "alpha"}}]
+                ),
                 _make_end_turn_response(),
             ]
         )
 
         agent = SearchAgent(anthropic_client=mock_anthropic)
 
-        with patch("llomax.search.mcp.stdio_client") as mock_stdio, \
-             patch("llomax.search.mcp.ClientSession") as mock_cs_cls, \
-             patch("llomax.search.thumbnails.download_thumbnails", new_callable=AsyncMock):
+        with (
+            patch("llomax.search.mcp.stdio_client") as mock_stdio,
+            patch("llomax.search.mcp.ClientSession") as mock_cs_cls,
+            patch("llomax.search.thumbnails.download_thumbnails", new_callable=AsyncMock),
+        ):
             mock_stdio.return_value.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
             mock_stdio.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_cs_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -361,14 +382,18 @@ class TestSearchAgent:
 
     async def test_deduplication(self):
         """Overlapping identifiers across searches are deduplicated."""
-        search_json_1 = json.dumps([
-            {"identifier": "dup", "title": "First", "thumbnail_url": "", "details_url": ""},
-            {"identifier": "unique1", "title": "U1", "thumbnail_url": "", "details_url": ""},
-        ])
-        search_json_2 = json.dumps([
-            {"identifier": "dup", "title": "Second", "thumbnail_url": "", "details_url": ""},
-            {"identifier": "unique2", "title": "U2", "thumbnail_url": "", "details_url": ""},
-        ])
+        search_json_1 = json.dumps(
+            [
+                {"identifier": "dup", "title": "First", "thumbnail_url": "", "details_url": ""},
+                {"identifier": "unique1", "title": "U1", "thumbnail_url": "", "details_url": ""},
+            ]
+        )
+        search_json_2 = json.dumps(
+            [
+                {"identifier": "dup", "title": "Second", "thumbnail_url": "", "details_url": ""},
+                {"identifier": "unique2", "title": "U2", "thumbnail_url": "", "details_url": ""},
+            ]
+        )
 
         mock_session = AsyncMock()
         mock_tools_result = MagicMock()
@@ -384,17 +409,23 @@ class TestSearchAgent:
         mock_anthropic = AsyncMock()
         mock_anthropic.messages.create = AsyncMock(
             side_effect=[
-                _make_tool_use_response([{"id": "t1", "name": "search_images_tool", "input": {"query": "q1"}}]),
-                _make_tool_use_response([{"id": "t2", "name": "search_images_tool", "input": {"query": "q2"}}]),
+                _make_tool_use_response(
+                    [{"id": "t1", "name": "search_images_tool", "input": {"query": "q1"}}]
+                ),
+                _make_tool_use_response(
+                    [{"id": "t2", "name": "search_images_tool", "input": {"query": "q2"}}]
+                ),
                 _make_end_turn_response(),
             ]
         )
 
         agent = SearchAgent(anthropic_client=mock_anthropic)
 
-        with patch("llomax.search.mcp.stdio_client") as mock_stdio, \
-             patch("llomax.search.mcp.ClientSession") as mock_cs_cls, \
-             patch("llomax.search.thumbnails.download_thumbnails", new_callable=AsyncMock):
+        with (
+            patch("llomax.search.mcp.stdio_client") as mock_stdio,
+            patch("llomax.search.mcp.ClientSession") as mock_cs_cls,
+            patch("llomax.search.thumbnails.download_thumbnails", new_callable=AsyncMock),
+        ):
             mock_stdio.return_value.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
             mock_stdio.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_cs_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
@@ -410,9 +441,11 @@ class TestSearchAgent:
 
     async def test_max_turns_safety(self):
         """Agent loop terminates after MAX_AGENT_TURNS even if LLM keeps requesting tools."""
-        search_json = json.dumps([
-            {"identifier": "x", "title": "X", "thumbnail_url": "", "details_url": ""},
-        ])
+        search_json = json.dumps(
+            [
+                {"identifier": "x", "title": "X", "thumbnail_url": "", "details_url": ""},
+            ]
+        )
 
         mock_session = AsyncMock()
         mock_tools_result = MagicMock()
@@ -429,9 +462,11 @@ class TestSearchAgent:
 
         agent = SearchAgent(anthropic_client=mock_anthropic)
 
-        with patch("llomax.search.mcp.stdio_client") as mock_stdio, \
-             patch("llomax.search.mcp.ClientSession") as mock_cs_cls, \
-             patch("llomax.search.thumbnails.download_thumbnails", new_callable=AsyncMock):
+        with (
+            patch("llomax.search.mcp.stdio_client") as mock_stdio,
+            patch("llomax.search.mcp.ClientSession") as mock_cs_cls,
+            patch("llomax.search.thumbnails.download_thumbnails", new_callable=AsyncMock),
+        ):
             mock_stdio.return_value.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
             mock_stdio.return_value.__aexit__ = AsyncMock(return_value=False)
             mock_cs_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)

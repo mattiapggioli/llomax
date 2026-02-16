@@ -9,13 +9,17 @@ from anthropic.types import MessageParam, ToolParam
 from mcp import ClientSession
 
 from llomax.models import SearchResult
-from llomax.search.mcp import forward_tool_calls, mcp_tools_to_anthropic, open_mcp_session
+from llomax.search.mcp import (
+    forward_tool_calls,
+    mcp_tools_to_anthropic,
+    open_mcp_session,
+)
 from llomax.search.thumbnails import download_thumbnails
 
 MAX_AGENT_TURNS = 15
 """Hard cap on LLM conversation turns to prevent runaway loops."""
 
-_DEFAULT_MCP_SERVER_PATH = "/home/mattiapggl/mcp-servers/internet-archive-mcp"
+_DEFAULT_MCP_SERVER_PATH = str(Path.home() / "mcp-servers/internet-archive-mcp")
 _DEFAULT_MODEL = "claude-sonnet-4-20250514"
 
 _SYSTEM_PROMPT = """\
@@ -72,9 +76,7 @@ async def run_agent_loop(
         if response.stop_reason == "end_turn":
             break
 
-        tool_results = await forward_tool_calls(
-            session, response.content, results_by_id
-        )
+        tool_results = await forward_tool_calls(session, response.content, results_by_id)
 
         messages.append({"role": "assistant", "content": list(response.content)})
         messages.append({"role": "user", "content": tool_results})
@@ -132,9 +134,7 @@ class SearchAgent:
             mcp_tools = await session.list_tools()
             tools = mcp_tools_to_anthropic(mcp_tools.tools)
 
-            results_by_id = await run_agent_loop(
-                self.client, self.model, tools, session, prompt
-            )
+            results_by_id = await run_agent_loop(self.client, self.model, tools, session, prompt)
 
         results = list(results_by_id.values())
         await download_thumbnails(results)

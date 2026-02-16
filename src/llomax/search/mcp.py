@@ -5,7 +5,7 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 from typing import AsyncIterator
 
-from anthropic.types import ToolParam
+from anthropic.types import ToolParam, ToolResultBlockParam
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 from mcp.types import TextContent
@@ -63,7 +63,7 @@ async def forward_tool_calls(
     session: ClientSession,
     content_blocks: list,
     results_by_id: dict[str, SearchResult],
-) -> list[dict]:
+) -> list[ToolResultBlockParam]:
     """Forward LLM tool_use blocks to the MCP server.
 
     Each ``tool_use`` block is sent to ``session.call_tool``. Results
@@ -81,7 +81,7 @@ async def forward_tool_calls(
         A list of ``tool_result`` dicts ready to append to the
         conversation messages.
     """
-    tool_results = []
+    tool_results: list[ToolResultBlockParam] = []
     for block in content_blocks:
         if block.type != "tool_use":
             continue
@@ -89,19 +89,17 @@ async def forward_tool_calls(
         mcp_result = await session.call_tool(block.name, arguments=block.input)
 
         first = mcp_result.content[0] if mcp_result.content else None
-        result_text = (
-            first.text if isinstance(first, TextContent) else "[]"
-        )
+        result_text = first.text if isinstance(first, TextContent) else "[]"
 
         if block.name == "search_images_tool":
             for sr in parse_search_results(result_text):
                 results_by_id.setdefault(sr.identifier, sr)
 
         tool_results.append(
-            {
-                "type": "tool_result",
-                "tool_use_id": block.id,
-                "content": result_text,
-            }
+            ToolResultBlockParam(
+                type="tool_result",
+                tool_use_id=block.id,
+                content=result_text,
+            )
         )
     return tool_results

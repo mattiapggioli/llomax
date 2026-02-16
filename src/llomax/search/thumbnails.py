@@ -33,6 +33,4 @@ async def download_thumbnails(results: list[SearchResult]) -> None:
                 result.image = Image.open(BytesIO(resp.content))
                 result.image.load()
             except Exception:
-                logger.warning(
-                    "Failed to download thumbnail for %s", result.identifier
-                )
+                logger.warning("Failed to download thumbnail for %s", result.identifier)
