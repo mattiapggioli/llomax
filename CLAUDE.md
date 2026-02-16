@@ -1,118 +1,76 @@
-# CLAUDE_new_project.md
+# CLAUDE.md
 
-This file provides guidance to Claude Code (claude.ai/code) for building the IA Collage Pipeline project.
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Project Description
+## Development Commands
 
-An LLM agent-based pipeline that creates artistic collages from Internet Archive material. Three-stage workflow:
+```bash
+uv sync                              # Install dependencies
+uv run pytest tests/ -v              # Run all tests (27 tests)
+uv run pytest tests/test_search_agent.py -v   # Run a single test file
+uv run pytest tests/ -k "test_name"  # Run a specific test by name
+uv run ruff check src/ tests/        # Lint
+uv run ruff format src/ tests/       # Format
+```
 
-1. **Search** — An LLM agent issues multiple searches against the Internet Archive via the `internet-archive-mcp` server, gathering source images based on a creative prompt.
-2. **Analysis** — NER (Named Entity Recognition) is performed on the retrieved images. Relevant visual elements are identified and cropped.
-3. **Composition** — Cropped elements are assembled into a final collage using image editing tools.
+Pytest is configured with `asyncio_mode = "auto"` — async test functions run automatically without markers. Ruff line length is 99.
+
+## Architecture
+
+Three-stage pipeline orchestrated by `Pipeline` (`src/llomax/pipeline.py`):
+
+```
+SearchAgent.search(prompt) → AnalysisClient.analyze(results) → compose(elements, canvas_size)
+```
+
+### Stage 1: Search (`src/llomax/search/`)
+
+`SearchAgent` runs a multi-turn LLM agent loop (max 15 turns) that uses Claude via the Anthropic API to decide which Internet Archive searches to perform. It communicates with the `internet-archive-mcp` server over stdio transport.
+
+- **`agent.py`** — `SearchAgent` class: opens MCP session, runs agent loop, deduplicates results by identifier, downloads thumbnails
+- **`mcp.py`** — `open_mcp_session()` context manager (spawns MCP server via `uv run`), `mcp_tools_to_anthropic()` format converter, `forward_tool_calls()` to dispatch LLM tool-use blocks to MCP
+- **`parsing.py`** — `parse_search_results()` extracts `SearchResult` objects from MCP tool response JSON
+- **`thumbnails.py`** — `download_thumbnails()` async batch downloader using httpx
+
+The MCP server path defaults to `/home/mattiapggl/mcp-servers/internet-archive-mcp` and is configurable via the `SearchAgent` constructor.
+
+### Stage 2: Analysis (`src/llomax/analysis/`)
+
+`AnalysisClient` is a `Protocol` with a single method `analyze(images) -> list[AnalysisResult]`. Currently only `PlaceholderAnalysisClient` exists (passthrough, labels everything `"unknown"`). This is the main extension point — replace with a real NER/vision backend.
+
+### Stage 3: Composition (`src/llomax/composition/`)
+
+`compose()` function places cropped elements onto a white canvas at random positions. Returns `CollageOutput` with the composed PIL Image.
+
+### Domain Models (`src/llomax/models.py`)
+
+- `SearchResult` — Internet Archive item with identifier, title, URLs, optional downloaded `Image`
+- `AnalysisResult` — Cropped element with source identifier, entity label, `Image`
+- `CollageOutput` — Final composed `Image` with canvas dimensions
+
+All are `@dataclass` types.
+
+## Code Conventions
+
+- Async-first for all I/O (MCP, HTTP). Tests use pytest-asyncio auto mode.
+- `from __future__ import annotations` in all modules.
+- Protocol-based abstractions for swappable backends (see `AnalysisClient`).
+- Each package has explicit `__all__` exports in `__init__.py`.
 
 ## Internet Archive MCP Server Reference
 
-The pipeline's search stage uses the `internet-archive-mcp` MCP server (located at `/home/mattiapggl/mcp-servers/internet-archive-mcp`). It exposes three tools over stdio transport.
+The search stage uses the `internet-archive-mcp` MCP server (at `/home/mattiapggl/mcp-servers/internet-archive-mcp`). Three tools over stdio:
 
-### Available Tools
+| Tool | Parameters | Returns |
+|------|-----------|---------|
+| `search_images_tool` | `query` (required), `max_results=10`, `collection=None` | JSON array of `{identifier, title, creator, date, description, thumbnail_url, details_url}` |
+| `list_curated_collections_tool` | none | JSON array of `{identifier, title, description}` — curated collections (nasa, flickrcommons, smithsonian, etc.) |
+| `search_collections_tool` | `query` (required), `max_results=10` | JSON array of `{identifier, title, description, details_url}` |
 
-#### `search_images_tool`
+- `thumbnail_url`: `https://archive.org/services/img/{identifier}` (low-res preview)
+- `details_url`: `https://archive.org/details/{identifier}` (item page)
+- Full-resolution download: `https://archive.org/download/{identifier}/{filename}` or use the `internetarchive` Python library
 
-Search the Internet Archive for images.
+## Environment
 
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `query` | `str` | required | Keywords to search for |
-| `max_results` | `int` | `10` | Maximum number of results |
-| `collection` | `str \| None` | `None` | Collection identifier to filter by |
-
-Returns JSON array of objects:
-
-```json
-{
-  "identifier": "img001",
-  "title": "Sunset",
-  "creator": "Alice",
-  "date": "2024-01-01",
-  "description": "A sunset photo",
-  "thumbnail_url": "https://archive.org/services/img/img001",
-  "details_url": "https://archive.org/details/img001"
-}
-```
-
-- `thumbnail_url` is a direct image URL (pattern: `https://archive.org/services/img/{identifier}`)
-- `details_url` links to the item's page (pattern: `https://archive.org/details/{identifier}`)
-- Missing fields default to `""`
-
-#### `list_curated_collections_tool`
-
-Returns a hardcoded list of high-quality image collections. No parameters.
-
-Included collections: `nasa`, `flickrcommons`, `metropolitanmuseumofart`, `biodiversitylibrary`, `smithsonian`, `brooklynmuseum`, `library_of_congress`.
-
-Returns JSON array of `{"identifier", "title", "description"}`.
-
-#### `search_collections_tool`
-
-Search for Internet Archive collections by keyword.
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `query` | `str` | required | Keywords to search for |
-| `max_results` | `int` | `10` | Maximum number of results |
-
-Returns JSON array of `{"identifier", "title", "description", "details_url"}`.
-
-### Connecting to the MCP Server
-
-Claude Desktop (`claude_desktop_config.json`):
-
-```json
-{
-  "mcpServers": {
-    "internet-archive": {
-      "command": "uv",
-      "args": ["run", "--directory", "/path/to/internet-archive-mcp", "internet-archive-mcp"]
-    }
-  }
-}
-```
-
-Claude Code:
-
-```bash
-claude mcp add internet-archive -- uv run --directory /path/to/internet-archive-mcp internet-archive-mcp
-```
-
-### Downloading Full-Resolution Images
-
-The MCP server returns `thumbnail_url` (low-res preview) and `details_url` (item page). To download actual image files for cropping/compositing, use the `internetarchive` Python library directly:
-
-```python
-import internetarchive
-item = internetarchive.get_item("identifier")
-# item.files lists all files; filter by format (e.g. "JPEG", "PNG")
-```
-
-Or download via URL: `https://archive.org/download/{identifier}/{filename}`.
-
-## Pipeline Architecture Guidelines
-
-### Stage 1: Search Agent
-
-- The LLM agent receives a creative prompt and decides which searches to perform (queries, collections, result counts).
-- It should issue multiple `search_images_tool` calls with varied queries to get diverse material.
-- Use `list_curated_collections_tool` or `search_collections_tool` to discover good source collections or then pass collection identifiers to `search_images_tool` for focused searches.
-- The agent should deduplicate results by `identifier` across multiple searches.
-- Thumbnail URLs can be used for quick previews; full-resolution downloads are needed for the analysis/composition stages.
-
-### Stage 2: Analysis (NER + Cropping)
-
-- Perform visual NER on downloaded images to identify and locate relevant elements (people, objects, text, landmarks).
-- Crop identified regions for use as collage elements.
-- Maintain metadata linkage: each crop should track its source `identifier`, original position, and detected entity label.
-
-### Stage 3: Composition
-
-- Arrange cropped elements into a collage based on the creative prompt.
-- Image editing tools handle layering, scaling, rotation, and blending of elements.
+Requires `ANTHROPIC_API_KEY` to be set for the search agent's LLM calls.
