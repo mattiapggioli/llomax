@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import anthropic
@@ -19,7 +20,9 @@ from llomax.search.thumbnails import download_thumbnails
 MAX_AGENT_TURNS = 15
 """Hard cap on LLM conversation turns to prevent runaway loops."""
 
-_DEFAULT_MCP_SERVER_PATH = str(Path.home() / "mcp-servers/internet-archive-mcp")
+_DEFAULT_MCP_SERVER_PATH = os.environ.get(
+    "MCP_SERVER_PATH", str(Path.home() / "mcp-servers/internet-archive-mcp")
+)
 _DEFAULT_MODEL = "claude-sonnet-4-20250514"
 
 _SYSTEM_PROMPT = """\

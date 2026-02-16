@@ -414,6 +414,7 @@ dependencies = [
     { name = "httpx" },
     { name = "mcp" },
     { name = "pillow" },
+    { name = "python-dotenv" },
 ]
 
 [package.dev-dependencies]
@@ -429,6 +430,7 @@ requires-dist = [
     { name = "httpx" },
     { name = "mcp" },
     { name = "pillow" },
+    { name = "python-dotenv" },
 ]
 
 [package.metadata.requires-dev]

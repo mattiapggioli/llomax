@@ -32,7 +32,7 @@ SearchAgent.search(prompt) → AnalysisClient.analyze(results) → compose(eleme
 - **`parsing.py`** — `parse_search_results()` extracts `SearchResult` objects from MCP tool response JSON
 - **`thumbnails.py`** — `download_thumbnails()` async batch downloader using httpx
 
-The MCP server path defaults to `/home/mattiapggl/mcp-servers/internet-archive-mcp` and is configurable via the `SearchAgent` constructor.
+The MCP server path is read from the `MCP_SERVER_PATH` env var (loaded from `.env` via python-dotenv), falling back to `~/mcp-servers/internet-archive-mcp`. Also configurable via the `SearchAgent` constructor.
 
 ### Stage 2: Analysis (`src/llomax/analysis/`)
 
@@ -59,7 +59,7 @@ All are `@dataclass` types.
 
 ## Internet Archive MCP Server Reference
 
-The search stage uses the `internet-archive-mcp` MCP server (at `/home/mattiapggl/mcp-servers/internet-archive-mcp`). Three tools over stdio:
+The search stage uses the `internet-archive-mcp` MCP server (path set via `MCP_SERVER_PATH` in `.env`). Three tools over stdio:
 
 | Tool | Parameters | Returns |
 |------|-----------|---------|
@@ -73,4 +73,9 @@ The search stage uses the `internet-archive-mcp` MCP server (at `/home/mattiapgg
 
 ## Environment
 
-Requires `ANTHROPIC_API_KEY` to be set for the search agent's LLM calls.
+Configuration is loaded from a `.env` file at the project root (via python-dotenv). Copy `.env.example` to `.env` and fill in values. The `.env` file is gitignored.
+
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `ANTHROPIC_API_KEY` | Yes | API key for the search agent's LLM calls |
+| `MCP_SERVER_PATH` | No | Path to the `internet-archive-mcp` server (default: `~/mcp-servers/internet-archive-mcp`) |

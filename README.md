@@ -18,11 +18,18 @@ Requires Python >= 3.11 and [uv](https://docs.astral.sh/uv/).
 # Install dependencies
 uv sync
 
-# Set your Anthropic API key
-export ANTHROPIC_API_KEY="sk-ant-..."
+# Copy the example env file and fill in your values
+cp .env.example .env
 ```
 
-The search stage requires the [`internet-archive-mcp`](https://github.com/internetarchive/internet-archive-mcp) server. By default it looks for it at `/home/mattiapggl/mcp-servers/internet-archive-mcp` — this path is configurable via the `SearchAgent` constructor.
+Edit `.env` with your settings:
+
+```dotenv
+ANTHROPIC_API_KEY=sk-ant-...
+MCP_SERVER_PATH=/path/to/internet-archive-mcp
+```
+
+The search stage requires the [`internet-archive-mcp`](https://github.com/internetarchive/internet-archive-mcp) server. The `MCP_SERVER_PATH` env var configures its location (defaults to `~/mcp-servers/internet-archive-mcp` if unset).
 
 ## Usage
 
