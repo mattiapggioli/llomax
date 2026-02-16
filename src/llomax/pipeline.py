@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import os
 from typing import Callable
 
 from llomax.analysis.client import AnalysisClient
 from llomax.composition.composer import compose as default_compose
 from llomax.models import AnalysisResult, CollageOutput
+from llomax.output import save_run
 from llomax.search.agent import SearchAgent
 
 
@@ -45,6 +47,11 @@ class Pipeline:
         Returns:
             A ``CollageOutput`` containing the composed image.
         """
-        results = await self.search_agent.search(prompt)
-        elements = await self.analysis_client.analyze(results)
-        return self.compose_fn(elements, canvas_size)
+        search_results = await self.search_agent.search(prompt)
+        elements = await self.analysis_client.analyze(search_results)
+        collage = self.compose_fn(elements, canvas_size)
+
+        output_dir = os.environ.get("OUTPUT_DIR", "output")
+        save_run(collage, search_results, prompt, canvas_size, output_dir)
+
+        return collage

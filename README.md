@@ -27,6 +27,7 @@ Edit `.env` with your settings:
 ```dotenv
 ANTHROPIC_API_KEY=sk-ant-...
 MCP_SERVER_PATH=/path/to/internet-archive-mcp
+OUTPUT_DIR=output
 ```
 
 The search stage requires the [`internet-archive-mcp`](https://github.com/internetarchive/internet-archive-mcp) server. The `MCP_SERVER_PATH` env var configures its location (defaults to `~/mcp-servers/internet-archive-mcp` if unset).
@@ -45,8 +46,8 @@ async def main():
     client = PlaceholderAnalysisClient()
     pipeline = Pipeline(search_agent=agent, analysis_client=client, compose_fn=compose)
 
+    # Collage and metadata are automatically saved to OUTPUT_DIR/{timestamp}/
     collage = await pipeline.run("vintage botanical illustrations", canvas_size=(1920, 1080))
-    collage.image.save("collage.png")
 
 asyncio.run(main())
 ```
@@ -64,6 +65,7 @@ uv run ruff format src/ tests/  # Format
 ```
 src/llomax/
 ├── models.py          # Domain models (SearchResult, AnalysisResult, CollageOutput)
+├── output.py          # Save collage and metadata to timestamped directories
 ├── pipeline.py        # End-to-end pipeline orchestrator
 ├── search/            # Stage 1: LLM-driven Internet Archive search
 │   ├── agent.py       # SearchAgent with multi-turn agent loop

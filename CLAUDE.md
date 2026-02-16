@@ -79,3 +79,4 @@ Configuration is loaded from a `.env` file at the project root (via python-doten
 |----------|----------|-------------|
 | `ANTHROPIC_API_KEY` | Yes | API key for the search agent's LLM calls |
 | `MCP_SERVER_PATH` | No | Path to the `internet-archive-mcp` server (default: `~/mcp-servers/internet-archive-mcp`) |
+| `OUTPUT_DIR` | No | Base directory for pipeline run outputs (default: `output`) |
