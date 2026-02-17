@@ -9,6 +9,7 @@ from llomax.analysis.client import AnalysisClient
 from llomax.composition.composer import compose as default_compose
 from llomax.models import AnalysisResult, CollageOutput, SearchResult
 from llomax.output import save_run
+from llomax.search.clients.internet_archive_client import ImageResult
 from llomax.search.curator import select_assets
 from llomax.search.internet_archive_agent import InternetArchiveAgent
 from llomax.search.thumbnails import download_thumbnails
@@ -46,49 +47,10 @@ class Pipeline:
         canvas_size: tuple[int, int] = (1024, 1024),
     ) -> CollageOutput:
         """Execute the full pipeline from prompt to collage."""
-
         raw_results = await self.search_agent.search(prompt)
-
-        seen: dict[str, dict] = {}
-        for item in raw_results:
-            ident = item.get("identifier", "")
-
-            if not ident or ident in seen:
-                continue
-
-            seen[ident] = {
-                "identifier": ident,
-                "title": item.get("title", ""),
-                "description": item.get("description", ""),
-                "year": item.get("date", "")[:4] if item.get("date") else "",
-            }
-
-        filtered_results = list(seen.values())
-
-        selected_ids = await select_assets(prompt, filtered_results, self.anthropic_client)
-
-        selected_set = set(selected_ids)
-        search_results = [
-            SearchResult(
-                identifier=item["identifier"],
-                title=item.get("title", ""),
-                thumbnail_url=f"https://archive.org/services/img/{item['identifier']}",
-                details_url=f"https://archive.org/details/{item['identifier']}",
-                description=item.get("description", ""),
-                year=item.get("date", "")[:4] if item.get("date") else "",
-            )
-            for item in raw_results
-            if item.get("identifier") in selected_set
-        ]
-
-        seen_ids: set[str] = set()
-        deduped: list[SearchResult] = []
-        for sr in search_results:
-            if sr.identifier in seen_ids:
-                continue
-            seen_ids.add(sr.identifier)
-            deduped.append(sr)
-        search_results = deduped
+        candidates = self._sanitize(raw_results)
+        selected_ids = await select_assets(prompt, candidates, self.anthropic_client)
+        search_results = self._build_search_results(raw_results, selected_ids)
 
         await download_thumbnails(search_results)
 
@@ -99,3 +61,57 @@ class Pipeline:
         save_run(collage, search_results, prompt, canvas_size, output_dir)
 
         return collage
+
+    def _sanitize(self, raw_results: list[ImageResult]) -> list[dict]:
+        """Deduplicate raw results and extract curator-relevant fields.
+
+        Args:
+            raw_results: Raw image results from the search agent.
+
+        Returns:
+            Deduplicated list of dicts with identifier, title, description, year.
+        """
+        seen: dict[str, dict] = {}
+        for item in raw_results:
+            ident = item.get("identifier", "")
+            if not ident or ident in seen:
+                continue
+            seen[ident] = {
+                "identifier": ident,
+                "title": item.get("title", ""),
+                "description": item.get("description", ""),
+                "year": item.get("date", "")[:4] if item.get("date") else "",
+            }
+        return list(seen.values())
+
+    def _build_search_results(
+        self, raw_results: list[ImageResult], selected_ids: list[str]
+    ) -> list[SearchResult]:
+        """Build deduplicated SearchResult objects for the selected identifiers.
+
+        Args:
+            raw_results: Raw image results from the search agent.
+            selected_ids: Identifiers chosen by the curator.
+
+        Returns:
+            Deduplicated list of SearchResult objects.
+        """
+        selected_set = set(selected_ids)
+        seen_ids: set[str] = set()
+        results: list[SearchResult] = []
+        for item in raw_results:
+            ident = item.get("identifier", "")
+            if ident not in selected_set or ident in seen_ids:
+                continue
+            seen_ids.add(ident)
+            results.append(
+                SearchResult(
+                    identifier=ident,
+                    title=item.get("title", ""),
+                    thumbnail_url=f"https://archive.org/services/img/{ident}",
+                    details_url=f"https://archive.org/details/{ident}",
+                    description=item.get("description", ""),
+                    year=item.get("date", "")[:4] if item.get("date") else "",
+                )
+            )
+        return results

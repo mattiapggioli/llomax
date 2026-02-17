@@ -8,7 +8,6 @@ import httpx
 from llomax.search.internet_archive_agent import (
     MAX_AGENT_TURNS,
     InternetArchiveAgent,
-    _dispatch_tool,
 )
 from PIL import Image
 
@@ -110,12 +109,17 @@ class TestIAClient:
 
 
 class TestDispatchTool:
+    def _make_agent(self, ia_client: IAClient) -> InternetArchiveAgent:
+        """Create an agent with a mock IA client for dispatch testing."""
+        return InternetArchiveAgent(anthropic_client=AsyncMock(), ia_client=ia_client)
+
     def test_dispatch_search_images(self):
         mock_client = MagicMock(spec=IAClient)
         mock_client.search_images.return_value = [
             ImageResult(identifier="x", title="X", thumbnail_url="", details_url="")
         ]
-        result = _dispatch_tool(mock_client, "search_images", {"keywords": "test"})
+        agent = self._make_agent(mock_client)
+        result = agent._dispatch_tool("search_images", {"keywords": "test"})
         parsed = json.loads(result)
         assert len(parsed) == 1
         assert parsed[0]["identifier"] == "x"
@@ -123,12 +127,14 @@ class TestDispatchTool:
     def test_dispatch_find_collections(self):
         mock_client = MagicMock(spec=IAClient)
         mock_client.find_collections.return_value = []
-        result = _dispatch_tool(mock_client, "find_collections", {"keywords": "space"})
+        agent = self._make_agent(mock_client)
+        result = agent._dispatch_tool("find_collections", {"keywords": "space"})
         assert json.loads(result) == []
 
     def test_dispatch_unknown_tool(self):
         mock_client = MagicMock(spec=IAClient)
-        result = _dispatch_tool(mock_client, "unknown_tool", {})
+        agent = self._make_agent(mock_client)
+        result = agent._dispatch_tool("unknown_tool", {})
         parsed = json.loads(result)
         assert "error" in parsed
 

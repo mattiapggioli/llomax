@@ -90,15 +90,11 @@ class IAClient:
         max_results: int = 20,
     ) -> list[ImageResult]:
         """Search for images using Lucene keywords, with optional collection and date filters."""
-        query = f"({keywords}) AND mediatype:image"
-        if collection:
-            query += f" AND collection:{collection}"
-        if date_filter:
-            query += f" AND date:[{date_filter}]"
-
+        query = self._build_query(keywords, "image", collection, date_filter)
         results: list[ImageResult] = []
-        search = internetarchive.search_items(query, fields=IMAGE_FIELDS, max_results=max_results)
-        for item in search:
+        for item in internetarchive.search_items(
+            query, fields=IMAGE_FIELDS, max_results=max_results
+        ):
             identifier = item.get("identifier", "")
             if not identifier:
                 continue
@@ -121,13 +117,11 @@ class IAClient:
         max_results: int = 10,
     ) -> list[CollectionResult]:
         """Search for Internet Archive collections by keyword."""
-        query = f"({keywords}) AND mediatype:collection"
-
+        query = self._build_query(keywords, "collection")
         results: list[CollectionResult] = []
-        search = internetarchive.search_items(
+        for item in internetarchive.search_items(
             query, fields=COLLECTION_FIELDS, max_results=max_results
-        )
-        for item in search:
+        ):
             identifier = item.get("identifier", "")
             if not identifier:
                 continue
@@ -144,3 +138,28 @@ class IAClient:
     def get_curated_collections(self) -> list[CuratedCollection]:
         """Return the hardcoded list of curated collections."""
         return list(CURATED_COLLECTIONS)
+
+    def _build_query(
+        self,
+        keywords: str,
+        mediatype: str,
+        collection: str | None = None,
+        date_filter: str | None = None,
+    ) -> str:
+        """Build a Lucene query string with mediatype and optional filters.
+
+        Args:
+            keywords: Search keywords (Lucene boolean syntax).
+            mediatype: Required mediatype filter (e.g. "image", "collection").
+            collection: Optional collection identifier to filter by.
+            date_filter: Optional date range (e.g. "1900 TO 1950").
+
+        Returns:
+            Formatted Lucene query string.
+        """
+        query = f"({keywords}) AND mediatype:{mediatype}"
+        if collection:
+            query += f" AND collection:{collection}"
+        if date_filter:
+            query += f" AND date:[{date_filter}]"
+        return query
