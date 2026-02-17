@@ -42,7 +42,6 @@ class Pipeline:
 
         raw_results = await self.search_agent.search(prompt)
 
-        # 2. Dedup & sanitize
         seen: dict[str, dict] = {}
         for item in raw_results:
             ident = item.get("identifier", "")
@@ -55,10 +54,8 @@ class Pipeline:
                 }
         sanitized = list(seen.values())
 
-        # 3. Curation: select best assets
         selected_ids = await select_assets(prompt, sanitized, self.anthropic_client)
 
-        # 4. Convert to SearchResult and download thumbnails
         selected_set = set(selected_ids)
         search_results = [
             SearchResult(
@@ -72,7 +69,7 @@ class Pipeline:
             for item in raw_results
             if item.get("identifier") in selected_set
         ]
-        # Dedup (keep first occurrence)
+
         seen_ids: set[str] = set()
         deduped: list[SearchResult] = []
         for sr in search_results:
@@ -83,7 +80,6 @@ class Pipeline:
 
         await download_thumbnails(search_results)
 
-        # 5. Analysis -> Composition (unchanged)
         elements = await self.analysis_client.analyze(search_results)
         collage = self.compose_fn(elements, canvas_size)
 
