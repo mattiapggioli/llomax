@@ -13,7 +13,7 @@ from llomax.search.internet_archive_agent import (
 from PIL import Image
 
 from llomax.models import SearchResult
-from llomax.search.clients.ia_client import IAClient, ImageResult
+from llomax.search.clients.internet_archive_client import IAClient, ImageResult
 from llomax.search.curator import select_assets
 from llomax.search.thumbnails import download_thumbnails
 
@@ -24,7 +24,7 @@ from llomax.search.thumbnails import download_thumbnails
 
 class TestIAClient:
     def test_search_images_forces_mediatype(self):
-        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+        with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter([])
             client = IAClient()
             client.search_images(keywords="flowers")
@@ -32,7 +32,7 @@ class TestIAClient:
             assert "mediatype:image" in call_args[0][0]
 
     def test_search_images_with_collection(self):
-        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+        with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter([])
             client = IAClient()
             client.search_images(keywords="flowers", collection="nasa")
@@ -40,7 +40,7 @@ class TestIAClient:
             assert "collection:nasa" in query
 
     def test_search_images_with_date_filter(self):
-        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+        with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter([])
             client = IAClient()
             client.search_images(keywords="flowers", date_filter="1900 TO 1950")
@@ -48,7 +48,7 @@ class TestIAClient:
             assert "date:[1900 TO 1950]" in query
 
     def test_search_images_transforms_results(self):
-        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+        with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter(
                 [
                     {
@@ -68,7 +68,7 @@ class TestIAClient:
             assert results[0]["details_url"] == "https://archive.org/details/img1"
 
     def test_search_images_skips_items_without_identifier(self):
-        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+        with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter(
                 [{"title": "No ID"}, {"identifier": "ok", "title": "Has ID"}]
             )
@@ -78,7 +78,7 @@ class TestIAClient:
             assert results[0]["identifier"] == "ok"
 
     def test_find_collections_forces_mediatype(self):
-        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+        with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter([])
             client = IAClient()
             client.find_collections(keywords="space")
@@ -86,7 +86,7 @@ class TestIAClient:
             assert "mediatype:collection" in query
 
     def test_find_collections_returns_results(self):
-        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+        with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter(
                 [{"identifier": "nasa", "title": "NASA", "description": "NASA images"}]
             )

@@ -35,7 +35,7 @@ InternetArchiveAgent.search(prompt) → Curation (select_assets) → AnalysisCli
 - **`find_collections`** — Discover IA collections by keyword. Mediatype:collection is enforced.
 
 Supporting files:
-- **`clients/ia_client.py`** — `IAClient` wraps the `internetarchive` Python library. Three methods: `search_images()`, `find_collections()`, `get_curated_collections()`. All enforce correct mediatypes.
+- **`clients/internet_archive_client.py`** — `IAClient` wraps the `internetarchive` Python library. Three methods: `search_images()`, `find_collections()`, `get_curated_collections()`. All enforce correct mediatypes.
 - **`thumbnails.py`** — `download_thumbnails()` async batch downloader using httpx
 
 ### Stage 2: Curation (`src/llomax/search/curator.py`)
@@ -67,7 +67,7 @@ All are `@dataclass` types.
 
 ## Internet Archive Client Reference
 
-The search stage uses the `internetarchive` Python library directly via `IAClient` (`src/llomax/search/clients/ia_client.py`). Three methods:
+The search stage uses the `internetarchive` Python library directly via `IAClient` (`src/llomax/search/clients/internet_archive_client.py`). Three methods:
 
 | Method | Parameters | Returns |
 |--------|-----------|---------|

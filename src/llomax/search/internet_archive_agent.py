@@ -7,7 +7,7 @@ import json
 import anthropic
 from anthropic.types import ToolParam
 
-from llomax.search.clients.ia_client import IAClient, ImageResult
+from llomax.search.clients.internet_archive_client import IAClient, ImageResult
 
 MAX_AGENT_TURNS = 10
 
