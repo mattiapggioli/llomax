@@ -6,7 +6,7 @@ LLM agent-based pipeline for creating artistic collages from Internet Archive ma
 
 llomax is a three-stage pipeline:
 
-1. **Search** — An LLM agent (Claude) autonomously queries the Internet Archive via MCP, issuing multiple searches with varied queries to gather diverse source images.
+1. **Search** — An LLM agent (Claude) autonomously queries the Internet Archive, issuing multiple searches with varied queries to gather diverse source images.
 2. **Analysis** — Visual NER identifies and crops relevant elements (people, objects, text, landmarks) from downloaded images.
 3. **Composition** — Cropped elements are arranged into a final collage.
 
@@ -26,11 +26,8 @@ Edit `.env` with your settings:
 
 ```dotenv
 ANTHROPIC_API_KEY=sk-ant-...
-MCP_SERVER_PATH=/path/to/internet-archive-mcp
 OUTPUT_DIR=output
 ```
-
-The search stage requires the [`internet-archive-mcp`](https://github.com/internetarchive/internet-archive-mcp) server. The `MCP_SERVER_PATH` env var configures its location (defaults to `~/mcp-servers/internet-archive-mcp` if unset).
 
 ## Usage
 
@@ -68,10 +65,11 @@ src/llomax/
 ├── output.py          # Save collage and metadata to timestamped directories
 ├── pipeline.py        # End-to-end pipeline orchestrator
 ├── search/            # Stage 1: LLM-driven Internet Archive search
-│   ├── agent.py       # SearchAgent with multi-turn agent loop
-│   ├── mcp.py         # MCP session management and tool forwarding
-│   ├── parsing.py     # Search result JSON parsing
-│   └── thumbnails.py  # Async thumbnail downloader
+│   ├── internet_archive_agent.py  # InternetArchiveAgent with multi-turn agent loop
+│   ├── clients/
+│   │   └── ia_client.py           # IAClient wrapping the internetarchive library
+│   ├── curator.py                 # Asset curation via Claude API
+│   └── thumbnails.py              # Async thumbnail downloader
 ├── analysis/          # Stage 2: Visual analysis and cropping
 │   └── client.py      # AnalysisClient protocol + placeholder implementation
 └── composition/       # Stage 3: Collage assembly

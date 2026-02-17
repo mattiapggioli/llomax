@@ -7,7 +7,7 @@ dependencies = [
     "Pillow",
     "anthropic",
     "httpx",
-    "mcp",
+    "internetarchive>=5.7.2",
     "python-dotenv",
 ]
 

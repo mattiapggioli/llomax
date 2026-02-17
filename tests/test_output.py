@@ -11,7 +11,9 @@ from llomax.output import save_run
 
 
 def _make_collage(width: int = 100, height: int = 80) -> CollageOutput:
-    return CollageOutput(image=Image.new("RGB", (width, height), "white"), width=width, height=height)
+    return CollageOutput(
+        image=Image.new("RGB", (width, height), "white"), width=width, height=height
+    )
 
 
 def _make_results() -> list[SearchResult]:

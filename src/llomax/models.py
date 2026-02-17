@@ -24,6 +24,8 @@ class SearchResult:
     title: str
     thumbnail_url: str
     details_url: str
+    description: str = ""
+    year: str = ""
     image: Image.Image | None = None
 
 

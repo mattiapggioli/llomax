@@ -1,5 +1,5 @@
 """Internet Archive search agent and supporting utilities."""
 
-from llomax.search.agent import SearchAgent
+from llomax.search.internet_archive_agent import InternetArchiveAgent
 
-__all__ = ["SearchAgent"]
+__all__ = ["InternetArchiveAgent"]

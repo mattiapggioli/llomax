@@ -1,108 +1,326 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
 from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+from llomax.search.internet_archive_agent import (
+    MAX_AGENT_TURNS,
+    InternetArchiveAgent,
+    _dispatch_tool,
+)
 from PIL import Image
 
-from mcp.types import TextContent
-
 from llomax.models import SearchResult
-from llomax.search.agent import MAX_AGENT_TURNS, SearchAgent, run_agent_loop
-from llomax.search.mcp import forward_tool_calls, mcp_tools_to_anthropic
-from llomax.search.parsing import parse_search_results
+from llomax.search.clients.ia_client import IAClient, ImageResult
+from llomax.search.curator import select_assets
 from llomax.search.thumbnails import download_thumbnails
 
+# ---------------------------------------------------------------------------
+# IAClient tests
+# ---------------------------------------------------------------------------
+
+
+class TestIAClient:
+    def test_search_images_forces_mediatype(self):
+        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+            mock_ia.search_items.return_value = iter([])
+            client = IAClient()
+            client.search_images(keywords="flowers")
+            call_args = mock_ia.search_items.call_args
+            assert "mediatype:image" in call_args[0][0]
+
+    def test_search_images_with_collection(self):
+        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+            mock_ia.search_items.return_value = iter([])
+            client = IAClient()
+            client.search_images(keywords="flowers", collection="nasa")
+            query = mock_ia.search_items.call_args[0][0]
+            assert "collection:nasa" in query
+
+    def test_search_images_with_date_filter(self):
+        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+            mock_ia.search_items.return_value = iter([])
+            client = IAClient()
+            client.search_images(keywords="flowers", date_filter="1900 TO 1950")
+            query = mock_ia.search_items.call_args[0][0]
+            assert "date:[1900 TO 1950]" in query
+
+    def test_search_images_transforms_results(self):
+        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+            mock_ia.search_items.return_value = iter(
+                [
+                    {
+                        "identifier": "img1",
+                        "title": "Sunset",
+                        "creator": "Author",
+                        "date": "2020-01-01",
+                        "description": "A sunset",
+                    }
+                ]
+            )
+            client = IAClient()
+            results = client.search_images(keywords="sunset")
+            assert len(results) == 1
+            assert results[0]["identifier"] == "img1"
+            assert results[0]["thumbnail_url"] == "https://archive.org/services/img/img1"
+            assert results[0]["details_url"] == "https://archive.org/details/img1"
+
+    def test_search_images_skips_items_without_identifier(self):
+        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+            mock_ia.search_items.return_value = iter(
+                [{"title": "No ID"}, {"identifier": "ok", "title": "Has ID"}]
+            )
+            client = IAClient()
+            results = client.search_images(keywords="test")
+            assert len(results) == 1
+            assert results[0]["identifier"] == "ok"
+
+    def test_find_collections_forces_mediatype(self):
+        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+            mock_ia.search_items.return_value = iter([])
+            client = IAClient()
+            client.find_collections(keywords="space")
+            query = mock_ia.search_items.call_args[0][0]
+            assert "mediatype:collection" in query
+
+    def test_find_collections_returns_results(self):
+        with patch("llomax.search.clients.ia_client.internetarchive") as mock_ia:
+            mock_ia.search_items.return_value = iter(
+                [{"identifier": "nasa", "title": "NASA", "description": "NASA images"}]
+            )
+            client = IAClient()
+            results = client.find_collections(keywords="space")
+            assert len(results) == 1
+            assert results[0]["identifier"] == "nasa"
+
+    def test_get_curated_collections(self):
+        client = IAClient()
+        collections = client.get_curated_collections()
+        assert len(collections) > 0
+        identifiers = [c["identifier"] for c in collections]
+        assert "nasa" in identifiers
+        assert "smithsonian" in identifiers
+
 
 # ---------------------------------------------------------------------------
-# Pure function tests
+# Tool dispatch tests
 # ---------------------------------------------------------------------------
 
 
-class TestParseSearchResults:
-    def test_basic_parsing(self):
-        raw = json.dumps(
-            [
-                {
-                    "identifier": "img1",
-                    "title": "Sunset",
-                    "thumbnail_url": "https://archive.org/services/img/img1",
-                    "details_url": "https://archive.org/details/img1",
-                },
-                {
-                    "identifier": "img2",
-                    "title": "Mountains",
-                    "thumbnail_url": "https://archive.org/services/img/img2",
-                    "details_url": "https://archive.org/details/img2",
-                },
+class TestDispatchTool:
+    def test_dispatch_search_images(self):
+        mock_client = MagicMock(spec=IAClient)
+        mock_client.search_images.return_value = [
+            ImageResult(identifier="x", title="X", thumbnail_url="", details_url="")
+        ]
+        result = _dispatch_tool(mock_client, "search_images", {"keywords": "test"})
+        parsed = json.loads(result)
+        assert len(parsed) == 1
+        assert parsed[0]["identifier"] == "x"
+
+    def test_dispatch_find_collections(self):
+        mock_client = MagicMock(spec=IAClient)
+        mock_client.find_collections.return_value = []
+        result = _dispatch_tool(mock_client, "find_collections", {"keywords": "space"})
+        assert json.loads(result) == []
+
+    def test_dispatch_unknown_tool(self):
+        mock_client = MagicMock(spec=IAClient)
+        result = _dispatch_tool(mock_client, "unknown_tool", {})
+        parsed = json.loads(result)
+        assert "error" in parsed
+
+
+# ---------------------------------------------------------------------------
+# InternetArchiveAgent tests
+# ---------------------------------------------------------------------------
+
+
+def _make_tool_use_response(tool_calls: list[dict], stop_reason="tool_use"):
+    blocks = []
+    for tc in tool_calls:
+        block = MagicMock()
+        block.type = "tool_use"
+        block.id = tc["id"]
+        block.name = tc["name"]
+        block.input = tc.get("input", {})
+        blocks.append(block)
+    resp = MagicMock()
+    resp.content = blocks
+    resp.stop_reason = stop_reason
+    return resp
+
+
+def _make_end_turn_response():
+    resp = MagicMock()
+    resp.content = [MagicMock(type="text", text="Done searching.")]
+    resp.stop_reason = "end_turn"
+    return resp
+
+
+class TestInternetArchiveAgent:
+    async def test_single_search_then_end(self):
+        mock_ia = MagicMock(spec=IAClient)
+        mock_ia.search_images.return_value = [
+            ImageResult(
+                identifier="r1",
+                title="Result",
+                thumbnail_url="https://archive.org/services/img/r1",
+                details_url="https://archive.org/details/r1",
+            )
+        ]
+
+        mock_anthropic = AsyncMock()
+        mock_anthropic.messages.create = AsyncMock(
+            side_effect=[
+                _make_tool_use_response(
+                    [{"id": "t1", "name": "search_images", "input": {"keywords": "test"}}]
+                ),
+                _make_end_turn_response(),
             ]
         )
-        results = parse_search_results(raw)
-        assert len(results) == 2
-        assert results[0].identifier == "img1"
-        assert results[1].title == "Mountains"
 
-    def test_empty_list(self):
-        assert parse_search_results("[]") == []
+        agent = InternetArchiveAgent(anthropic_client=mock_anthropic, ia_client=mock_ia)
+        results = await agent.search("test prompt")
 
-    def test_missing_fields_default_to_empty_string(self):
-        raw = json.dumps([{"identifier": "x"}])
-        results = parse_search_results(raw)
         assert len(results) == 1
-        assert results[0].title == ""
-        assert results[0].thumbnail_url == ""
-        assert results[0].details_url == ""
+        assert results[0]["identifier"] == "r1"
+        assert mock_anthropic.messages.create.call_count == 2
 
-    def test_items_without_identifier_are_skipped(self):
-        raw = json.dumps([{"title": "No ID"}, {"identifier": "ok", "title": "Has ID"}])
-        results = parse_search_results(raw)
-        assert len(results) == 1
-        assert results[0].identifier == "ok"
-
-    def test_non_list_returns_empty(self):
-        assert parse_search_results('{"not": "a list"}') == []
-
-    def test_non_dict_items_are_skipped(self):
-        raw = json.dumps(["just_a_string", {"identifier": "ok"}])
-        results = parse_search_results(raw)
-        assert len(results) == 1
-
-
-class TestMcpToolsToAnthropic:
-    def test_converts_tools(self):
-        @dataclass
-        class FakeTool:
-            name: str
-            description: str | None
-            inputSchema: dict
-
-        tools = [
-            FakeTool(
-                name="search_images_tool",
-                description="Search images",
-                inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
-            ),
-            FakeTool(
-                name="list_curated_collections_tool",
-                description=None,
-                inputSchema={"type": "object", "properties": {}},
-            ),
+    async def test_deduplication(self):
+        mock_ia = MagicMock(spec=IAClient)
+        mock_ia.search_images.side_effect = [
+            [
+                ImageResult(identifier="dup", title="First", thumbnail_url="", details_url=""),
+                ImageResult(identifier="u1", title="U1", thumbnail_url="", details_url=""),
+            ],
+            [
+                ImageResult(identifier="dup", title="Second", thumbnail_url="", details_url=""),
+                ImageResult(identifier="u2", title="U2", thumbnail_url="", details_url=""),
+            ],
         ]
-        result = mcp_tools_to_anthropic(tools)
-        assert len(result) == 2
-        assert result[0] == {
-            "name": "search_images_tool",
-            "description": "Search images",
-            "input_schema": {"type": "object", "properties": {"query": {"type": "string"}}},
-        }
-        assert result[1]["description"] == ""
+
+        mock_anthropic = AsyncMock()
+        mock_anthropic.messages.create = AsyncMock(
+            side_effect=[
+                _make_tool_use_response(
+                    [{"id": "t1", "name": "search_images", "input": {"keywords": "q1"}}]
+                ),
+                _make_tool_use_response(
+                    [{"id": "t2", "name": "search_images", "input": {"keywords": "q2"}}]
+                ),
+                _make_end_turn_response(),
+            ]
+        )
+
+        agent = InternetArchiveAgent(anthropic_client=mock_anthropic, ia_client=mock_ia)
+        results = await agent.search("test")
+
+        identifiers = [r["identifier"] for r in results]
+        assert len(identifiers) == 3
+        assert identifiers.count("dup") == 1
+        dup_result = next(r for r in results if r["identifier"] == "dup")
+        assert dup_result["title"] == "First"
+
+    async def test_max_turns_safety(self):
+        mock_ia = MagicMock(spec=IAClient)
+        mock_ia.search_images.return_value = [
+            ImageResult(identifier="x", title="X", thumbnail_url="", details_url="")
+        ]
+
+        mock_anthropic = AsyncMock()
+        mock_anthropic.messages.create = AsyncMock(
+            return_value=_make_tool_use_response(
+                [{"id": "t1", "name": "search_images", "input": {"keywords": "loop"}}]
+            )
+        )
+
+        agent = InternetArchiveAgent(anthropic_client=mock_anthropic, ia_client=mock_ia)
+        results = await agent.search("infinite loop")
+
+        assert mock_anthropic.messages.create.call_count == MAX_AGENT_TURNS
+        assert len(results) >= 1
+
+    async def test_end_turn_on_first_response(self):
+        mock_ia = MagicMock(spec=IAClient)
+        mock_anthropic = AsyncMock()
+        mock_anthropic.messages.create = AsyncMock(return_value=_make_end_turn_response())
+
+        agent = InternetArchiveAgent(anthropic_client=mock_anthropic, ia_client=mock_ia)
+        results = await agent.search("nothing")
+
+        assert results == []
+        assert mock_anthropic.messages.create.call_count == 1
 
 
 # ---------------------------------------------------------------------------
-# Download thumbnails tests
+# Curator tests
+# ---------------------------------------------------------------------------
+
+
+class TestCurator:
+    async def test_selects_identifiers(self):
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = '["id1", "id3"]'
+        mock_response.content = [text_block]
+
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        candidates = [
+            {"identifier": "id1", "title": "A", "description": "", "year": ""},
+            {"identifier": "id2", "title": "B", "description": "", "year": ""},
+            {"identifier": "id3", "title": "C", "description": "", "year": ""},
+        ]
+        selected = await select_assets("prompt", candidates, mock_client)
+        assert selected == ["id1", "id3"]
+
+    async def test_handles_markdown_fenced_json(self):
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = '```json\n["id1"]\n```'
+        mock_response.content = [text_block]
+
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        selected = await select_assets("prompt", [], mock_client)
+        assert selected == ["id1"]
+
+    async def test_handles_non_list_response(self):
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = '{"not": "a list"}'
+        mock_response.content = [text_block]
+
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        selected = await select_assets("prompt", [], mock_client)
+        assert selected == []
+
+    async def test_filters_non_string_items(self):
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = '["id1", 42, "id2", null]'
+        mock_response.content = [text_block]
+
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        selected = await select_assets("prompt", [], mock_client)
+        assert selected == ["id1", "id2"]
+
+
+# ---------------------------------------------------------------------------
+# Download thumbnails tests (unchanged)
 # ---------------------------------------------------------------------------
 
 
@@ -165,314 +383,3 @@ class TestDownloadThumbnails:
         ]
         await download_thumbnails(results)
         assert results[0].image is None
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _make_tool_use_response(tool_calls: list[dict], stop_reason="tool_use"):
-    """Build a mock Anthropic response with tool_use content blocks."""
-    blocks = []
-    for tc in tool_calls:
-        block = MagicMock()
-        block.type = "tool_use"
-        block.id = tc["id"]
-        block.name = tc["name"]
-        block.input = tc.get("input", {})
-        blocks.append(block)
-    resp = MagicMock()
-    resp.content = blocks
-    resp.stop_reason = stop_reason
-    return resp
-
-
-def _make_end_turn_response():
-    resp = MagicMock()
-    resp.content = [MagicMock(type="text", text="Done searching.")]
-    resp.stop_reason = "end_turn"
-    return resp
-
-
-def _make_mcp_tool_result(text: str):
-    result = MagicMock()
-    result.content = [TextContent(type="text", text=text)]
-    return result
-
-
-@dataclass
-class FakeMcpTool:
-    name: str
-    description: str
-    inputSchema: dict
-
-
-_FAKE_MCP_TOOLS = [
-    FakeMcpTool(
-        name="search_images_tool",
-        description="Search images",
-        inputSchema={"type": "object", "properties": {"query": {"type": "string"}}},
-    ),
-]
-
-
-# ---------------------------------------------------------------------------
-# forward_tool_calls tests
-# ---------------------------------------------------------------------------
-
-
-class TestForwardToolCalls:
-    async def test_forwards_tool_use_blocks(self):
-        search_json = json.dumps(
-            [
-                {"identifier": "a1", "title": "A", "thumbnail_url": "", "details_url": ""},
-            ]
-        )
-        mock_session = AsyncMock()
-        mock_session.call_tool = AsyncMock(return_value=_make_mcp_tool_result(search_json))
-
-        block = MagicMock()
-        block.type = "tool_use"
-        block.id = "t1"
-        block.name = "search_images_tool"
-        block.input = {"query": "test"}
-
-        results_by_id: dict[str, SearchResult] = {}
-        tool_results = await forward_tool_calls(mock_session, [block], results_by_id)
-
-        assert len(tool_results) == 1
-        assert tool_results[0]["tool_use_id"] == "t1"
-        assert "a1" in results_by_id
-
-    async def test_skips_non_tool_use_blocks(self):
-        text_block = MagicMock()
-        text_block.type = "text"
-
-        mock_session = AsyncMock()
-        results_by_id: dict[str, SearchResult] = {}
-        tool_results = await forward_tool_calls(mock_session, [text_block], results_by_id)
-
-        assert tool_results == []
-        mock_session.call_tool.assert_not_called()
-
-    async def test_non_search_tool_does_not_collect_results(self):
-        mock_session = AsyncMock()
-        mock_session.call_tool = AsyncMock(
-            return_value=_make_mcp_tool_result('[{"identifier":"col1","title":"C"}]')
-        )
-
-        block = MagicMock()
-        block.type = "tool_use"
-        block.id = "t1"
-        block.name = "list_curated_collections_tool"
-        block.input = {}
-
-        results_by_id: dict[str, SearchResult] = {}
-        await forward_tool_calls(mock_session, [block], results_by_id)
-
-        assert results_by_id == {}
-
-
-# ---------------------------------------------------------------------------
-# run_agent_loop tests
-# ---------------------------------------------------------------------------
-
-
-class TestRunAgentLoop:
-    async def test_returns_results_on_end_turn(self):
-        search_json = json.dumps(
-            [
-                {"identifier": "r1", "title": "R", "thumbnail_url": "", "details_url": ""},
-            ]
-        )
-        mock_session = AsyncMock()
-        mock_session.call_tool = AsyncMock(return_value=_make_mcp_tool_result(search_json))
-
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(
-            side_effect=[
-                _make_tool_use_response(
-                    [{"id": "t1", "name": "search_images_tool", "input": {"query": "q"}}]
-                ),
-                _make_end_turn_response(),
-            ]
-        )
-
-        tools = mcp_tools_to_anthropic(_FAKE_MCP_TOOLS)
-        results = await run_agent_loop(mock_client, "model", tools, mock_session, "prompt")
-
-        assert "r1" in results
-        assert mock_client.messages.create.call_count == 2
-
-    async def test_caps_at_max_turns(self):
-        search_json = json.dumps(
-            [
-                {"identifier": "x", "title": "X", "thumbnail_url": "", "details_url": ""},
-            ]
-        )
-        mock_session = AsyncMock()
-        mock_session.call_tool = AsyncMock(return_value=_make_mcp_tool_result(search_json))
-
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(
-            return_value=_make_tool_use_response(
-                [{"id": "t1", "name": "search_images_tool", "input": {"query": "loop"}}]
-            )
-        )
-
-        tools = mcp_tools_to_anthropic(_FAKE_MCP_TOOLS)
-        results = await run_agent_loop(mock_client, "model", tools, mock_session, "prompt")
-
-        assert mock_client.messages.create.call_count == MAX_AGENT_TURNS
-        assert len(results) >= 1
-
-
-# ---------------------------------------------------------------------------
-# SearchAgent integration tests (fully mocked)
-# ---------------------------------------------------------------------------
-
-
-class TestSearchAgent:
-    async def test_single_turn(self):
-        """One tool call then end_turn — returns parsed results."""
-        search_json = json.dumps(
-            [
-                {
-                    "identifier": "a1",
-                    "title": "Alpha",
-                    "thumbnail_url": "http://x/a1",
-                    "details_url": "",
-                },
-            ]
-        )
-
-        mock_session = AsyncMock()
-        mock_tools_result = MagicMock()
-        mock_tools_result.tools = _FAKE_MCP_TOOLS
-        mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
-        mock_session.call_tool = AsyncMock(return_value=_make_mcp_tool_result(search_json))
-
-        mock_anthropic = AsyncMock()
-        mock_anthropic.messages.create = AsyncMock(
-            side_effect=[
-                _make_tool_use_response(
-                    [{"id": "t1", "name": "search_images_tool", "input": {"query": "alpha"}}]
-                ),
-                _make_end_turn_response(),
-            ]
-        )
-
-        agent = SearchAgent(anthropic_client=mock_anthropic)
-
-        with (
-            patch("llomax.search.mcp.stdio_client") as mock_stdio,
-            patch("llomax.search.mcp.ClientSession") as mock_cs_cls,
-            patch("llomax.search.thumbnails.download_thumbnails", new_callable=AsyncMock),
-        ):
-            mock_stdio.return_value.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-            mock_stdio.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_cs_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_cs_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            results = await agent.search("find alpha images")
-
-        assert len(results) == 1
-        assert results[0].identifier == "a1"
-
-    async def test_deduplication(self):
-        """Overlapping identifiers across searches are deduplicated."""
-        search_json_1 = json.dumps(
-            [
-                {"identifier": "dup", "title": "First", "thumbnail_url": "", "details_url": ""},
-                {"identifier": "unique1", "title": "U1", "thumbnail_url": "", "details_url": ""},
-            ]
-        )
-        search_json_2 = json.dumps(
-            [
-                {"identifier": "dup", "title": "Second", "thumbnail_url": "", "details_url": ""},
-                {"identifier": "unique2", "title": "U2", "thumbnail_url": "", "details_url": ""},
-            ]
-        )
-
-        mock_session = AsyncMock()
-        mock_tools_result = MagicMock()
-        mock_tools_result.tools = _FAKE_MCP_TOOLS
-        mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
-        mock_session.call_tool = AsyncMock(
-            side_effect=[
-                _make_mcp_tool_result(search_json_1),
-                _make_mcp_tool_result(search_json_2),
-            ]
-        )
-
-        mock_anthropic = AsyncMock()
-        mock_anthropic.messages.create = AsyncMock(
-            side_effect=[
-                _make_tool_use_response(
-                    [{"id": "t1", "name": "search_images_tool", "input": {"query": "q1"}}]
-                ),
-                _make_tool_use_response(
-                    [{"id": "t2", "name": "search_images_tool", "input": {"query": "q2"}}]
-                ),
-                _make_end_turn_response(),
-            ]
-        )
-
-        agent = SearchAgent(anthropic_client=mock_anthropic)
-
-        with (
-            patch("llomax.search.mcp.stdio_client") as mock_stdio,
-            patch("llomax.search.mcp.ClientSession") as mock_cs_cls,
-            patch("llomax.search.thumbnails.download_thumbnails", new_callable=AsyncMock),
-        ):
-            mock_stdio.return_value.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-            mock_stdio.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_cs_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_cs_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            results = await agent.search("test")
-
-        identifiers = [r.identifier for r in results]
-        assert len(identifiers) == 3
-        assert identifiers.count("dup") == 1
-        dup_result = next(r for r in results if r.identifier == "dup")
-        assert dup_result.title == "First"
-
-    async def test_max_turns_safety(self):
-        """Agent loop terminates after MAX_AGENT_TURNS even if LLM keeps requesting tools."""
-        search_json = json.dumps(
-            [
-                {"identifier": "x", "title": "X", "thumbnail_url": "", "details_url": ""},
-            ]
-        )
-
-        mock_session = AsyncMock()
-        mock_tools_result = MagicMock()
-        mock_tools_result.tools = _FAKE_MCP_TOOLS
-        mock_session.list_tools = AsyncMock(return_value=mock_tools_result)
-        mock_session.call_tool = AsyncMock(return_value=_make_mcp_tool_result(search_json))
-
-        mock_anthropic = AsyncMock()
-        mock_anthropic.messages.create = AsyncMock(
-            return_value=_make_tool_use_response(
-                [{"id": "t1", "name": "search_images_tool", "input": {"query": "loop"}}]
-            )
-        )
-
-        agent = SearchAgent(anthropic_client=mock_anthropic)
-
-        with (
-            patch("llomax.search.mcp.stdio_client") as mock_stdio,
-            patch("llomax.search.mcp.ClientSession") as mock_cs_cls,
-            patch("llomax.search.thumbnails.download_thumbnails", new_callable=AsyncMock),
-        ):
-            mock_stdio.return_value.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
-            mock_stdio.return_value.__aexit__ = AsyncMock(return_value=False)
-            mock_cs_cls.return_value.__aenter__ = AsyncMock(return_value=mock_session)
-            mock_cs_cls.return_value.__aexit__ = AsyncMock(return_value=False)
-
-            results = await agent.search("infinite loop")
-
-        assert mock_anthropic.messages.create.call_count == MAX_AGENT_TURNS
-        assert len(results) >= 1

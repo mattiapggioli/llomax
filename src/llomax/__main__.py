@@ -12,7 +12,7 @@ import asyncio
 
 from llomax.analysis.client import PlaceholderAnalysisClient
 from llomax.pipeline import Pipeline
-from llomax.search.agent import SearchAgent
+from llomax.search.internet_archive_agent import InternetArchiveAgent
 
 
 def _parse_canvas(value: str) -> tuple[int, int]:
@@ -24,7 +24,7 @@ def _parse_canvas(value: str) -> tuple[int, int]:
 
 
 async def _run(prompt: str, canvas_size: tuple[int, int]) -> None:
-    agent = SearchAgent()
+    agent = InternetArchiveAgent()
     client = PlaceholderAnalysisClient()
     pipeline = Pipeline(search_agent=agent, analysis_client=client)
     await pipeline.run(prompt, canvas_size=canvas_size)
