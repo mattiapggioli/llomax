@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import itertools
 from typing import Required, TypedDict
 
 import internetarchive
@@ -10,7 +11,7 @@ DETAILS_URL_TEMPLATE = "https://archive.org/details/{identifier}"
 IMAGE_FIELDS = ["identifier", "title", "creator", "date", "description"]
 COLLECTION_FIELDS = ["identifier", "title", "description"]
 
-CURATED_COLLECTIONS = [
+CURATED_COLLECTIONS: list[CuratedCollection] = [
     {"identifier": "nasa", "title": "NASA Images", "description": "NASA's image archive"},
     {
         "identifier": "flickrcommons",
@@ -79,7 +80,7 @@ class CuratedCollection(TypedDict):
     description: str
 
 
-class IAClient:
+class InternetArchiveClient:
     """Synchronous client for Internet Archive searches."""
 
     def search_images(
@@ -92,8 +93,8 @@ class IAClient:
         """Search for images using Lucene keywords, with optional collection and date filters."""
         query = self._build_query(keywords, "image", collection, date_filter)
         results: list[ImageResult] = []
-        for item in internetarchive.search_items(
-            query, fields=IMAGE_FIELDS, max_results=max_results
+        for item in itertools.islice(
+            internetarchive.search_items(query, fields=IMAGE_FIELDS), max_results
         ):
             identifier = item.get("identifier", "")
             if not identifier:
@@ -119,8 +120,8 @@ class IAClient:
         """Search for Internet Archive collections by keyword."""
         query = self._build_query(keywords, "collection")
         results: list[CollectionResult] = []
-        for item in internetarchive.search_items(
-            query, fields=COLLECTION_FIELDS, max_results=max_results
+        for item in itertools.islice(
+            internetarchive.search_items(query, fields=COLLECTION_FIELDS), max_results
         ):
             identifier = item.get("identifier", "")
             if not identifier:

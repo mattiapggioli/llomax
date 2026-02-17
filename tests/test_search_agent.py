@@ -12,20 +12,20 @@ from llomax.search.internet_archive_agent import (
 from PIL import Image
 
 from llomax.models import SearchResult
-from llomax.search.clients.internet_archive_client import IAClient, ImageResult
+from llomax.search.clients.internet_archive_client import InternetArchiveClient, ImageResult
 from llomax.search.curator import select_assets
 from llomax.search.thumbnails import download_thumbnails
 
 # ---------------------------------------------------------------------------
-# IAClient tests
+# InternetArchiveClient tests
 # ---------------------------------------------------------------------------
 
 
-class TestIAClient:
+class TestInternetArchiveClient:
     def test_search_images_forces_mediatype(self):
         with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter([])
-            client = IAClient()
+            client = InternetArchiveClient()
             client.search_images(keywords="flowers")
             call_args = mock_ia.search_items.call_args
             assert "mediatype:image" in call_args[0][0]
@@ -33,7 +33,7 @@ class TestIAClient:
     def test_search_images_with_collection(self):
         with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter([])
-            client = IAClient()
+            client = InternetArchiveClient()
             client.search_images(keywords="flowers", collection="nasa")
             query = mock_ia.search_items.call_args[0][0]
             assert "collection:nasa" in query
@@ -41,7 +41,7 @@ class TestIAClient:
     def test_search_images_with_date_filter(self):
         with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter([])
-            client = IAClient()
+            client = InternetArchiveClient()
             client.search_images(keywords="flowers", date_filter="1900 TO 1950")
             query = mock_ia.search_items.call_args[0][0]
             assert "date:[1900 TO 1950]" in query
@@ -59,7 +59,7 @@ class TestIAClient:
                     }
                 ]
             )
-            client = IAClient()
+            client = InternetArchiveClient()
             results = client.search_images(keywords="sunset")
             assert len(results) == 1
             assert results[0]["identifier"] == "img1"
@@ -71,7 +71,7 @@ class TestIAClient:
             mock_ia.search_items.return_value = iter(
                 [{"title": "No ID"}, {"identifier": "ok", "title": "Has ID"}]
             )
-            client = IAClient()
+            client = InternetArchiveClient()
             results = client.search_images(keywords="test")
             assert len(results) == 1
             assert results[0]["identifier"] == "ok"
@@ -79,7 +79,7 @@ class TestIAClient:
     def test_find_collections_forces_mediatype(self):
         with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter([])
-            client = IAClient()
+            client = InternetArchiveClient()
             client.find_collections(keywords="space")
             query = mock_ia.search_items.call_args[0][0]
             assert "mediatype:collection" in query
@@ -89,13 +89,13 @@ class TestIAClient:
             mock_ia.search_items.return_value = iter(
                 [{"identifier": "nasa", "title": "NASA", "description": "NASA images"}]
             )
-            client = IAClient()
+            client = InternetArchiveClient()
             results = client.find_collections(keywords="space")
             assert len(results) == 1
             assert results[0]["identifier"] == "nasa"
 
     def test_get_curated_collections(self):
-        client = IAClient()
+        client = InternetArchiveClient()
         collections = client.get_curated_collections()
         assert len(collections) > 0
         identifiers = [c["identifier"] for c in collections]
@@ -109,12 +109,12 @@ class TestIAClient:
 
 
 class TestDispatchTool:
-    def _make_agent(self, ia_client: IAClient) -> InternetArchiveAgent:
+    def _make_agent(self, ia_client: InternetArchiveClient) -> InternetArchiveAgent:
         """Create an agent with a mock IA client for dispatch testing."""
         return InternetArchiveAgent(anthropic_client=AsyncMock(), ia_client=ia_client)
 
     def test_dispatch_search_images(self):
-        mock_client = MagicMock(spec=IAClient)
+        mock_client = MagicMock(spec=InternetArchiveClient)
         mock_client.search_images.return_value = [
             ImageResult(identifier="x", title="X", thumbnail_url="", details_url="")
         ]
@@ -125,14 +125,14 @@ class TestDispatchTool:
         assert parsed[0]["identifier"] == "x"
 
     def test_dispatch_find_collections(self):
-        mock_client = MagicMock(spec=IAClient)
+        mock_client = MagicMock(spec=InternetArchiveClient)
         mock_client.find_collections.return_value = []
         agent = self._make_agent(mock_client)
         result = agent._dispatch_tool("find_collections", {"keywords": "space"})
         assert json.loads(result) == []
 
     def test_dispatch_unknown_tool(self):
-        mock_client = MagicMock(spec=IAClient)
+        mock_client = MagicMock(spec=InternetArchiveClient)
         agent = self._make_agent(mock_client)
         result = agent._dispatch_tool("unknown_tool", {})
         parsed = json.loads(result)
@@ -168,7 +168,7 @@ def _make_end_turn_response():
 
 class TestInternetArchiveAgent:
     async def test_single_search_then_end(self):
-        mock_ia = MagicMock(spec=IAClient)
+        mock_ia = MagicMock(spec=InternetArchiveClient)
         mock_ia.search_images.return_value = [
             ImageResult(
                 identifier="r1",
@@ -196,7 +196,7 @@ class TestInternetArchiveAgent:
         assert mock_anthropic.messages.create.call_count == 2
 
     async def test_deduplication(self):
-        mock_ia = MagicMock(spec=IAClient)
+        mock_ia = MagicMock(spec=InternetArchiveClient)
         mock_ia.search_images.side_effect = [
             [
                 ImageResult(identifier="dup", title="First", thumbnail_url="", details_url=""),
@@ -231,7 +231,7 @@ class TestInternetArchiveAgent:
         assert dup_result["title"] == "First"
 
     async def test_max_turns_safety(self):
-        mock_ia = MagicMock(spec=IAClient)
+        mock_ia = MagicMock(spec=InternetArchiveClient)
         mock_ia.search_images.return_value = [
             ImageResult(identifier="x", title="X", thumbnail_url="", details_url="")
         ]
@@ -250,7 +250,7 @@ class TestInternetArchiveAgent:
         assert len(results) >= 1
 
     async def test_end_turn_on_first_response(self):
-        mock_ia = MagicMock(spec=IAClient)
+        mock_ia = MagicMock(spec=InternetArchiveClient)
         mock_anthropic = AsyncMock()
         mock_anthropic.messages.create = AsyncMock(return_value=_make_end_turn_response())
 

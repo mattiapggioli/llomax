@@ -67,7 +67,7 @@ src/llomax/
 ├── search/            # Stage 1: LLM-driven Internet Archive search
 │   ├── internet_archive_agent.py  # InternetArchiveAgent with multi-turn agent loop
 │   ├── clients/
-│   │   └── internet_archive_client.py  # IAClient wrapping the internetarchive library
+│   │   └── internet_archive_client.py  # InternetArchiveClient wrapping the internetarchive library
 │   ├── curator.py                 # Asset curation via Claude API
 │   └── thumbnails.py              # Async thumbnail downloader
 ├── analysis/          # Stage 2: Visual analysis and cropping

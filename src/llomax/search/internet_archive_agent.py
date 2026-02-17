@@ -5,7 +5,7 @@ import json
 import anthropic
 from anthropic.types import ToolParam
 
-from llomax.search.clients.internet_archive_client import IAClient, ImageResult
+from llomax.search.clients.internet_archive_client import InternetArchiveClient, ImageResult
 
 MAX_AGENT_TURNS = 10
 
@@ -92,7 +92,7 @@ class InternetArchiveAgent:
         self,
         model: str = _DEFAULT_MODEL,
         anthropic_client: anthropic.AsyncAnthropic | None = None,
-        ia_client: IAClient | None = None,
+        ia_client: InternetArchiveClient | None = None,
     ):
         """Initialize the agent.
 
@@ -105,7 +105,7 @@ class InternetArchiveAgent:
         """
         self.model = model
         self.client = anthropic_client or anthropic.AsyncAnthropic()
-        self.ia_client = ia_client or IAClient()
+        self.ia_client = ia_client or InternetArchiveClient()
 
     async def search(self, prompt: str) -> list[ImageResult]:
         """Run the agent loop and return deduplicated image results."""
@@ -131,7 +131,7 @@ class InternetArchiveAgent:
         return list(results_by_id.values())
 
     def _dispatch_tool(self, tool_name: str, tool_input: dict) -> str:
-        """Route a tool call to the corresponding IAClient method and return JSON.
+        """Route a tool call to the corresponding InternetArchiveClient method and return JSON.
 
         Args:
             tool_name: Name of the tool to dispatch.

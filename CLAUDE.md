@@ -29,13 +29,13 @@ InternetArchiveAgent.search(prompt) → Curation (select_assets) → AnalysisCli
 
 ### Stage 1: Discovery (`src/llomax/search/`)
 
-`InternetArchiveAgent` (`internet_archive_agent.py`) runs a structured LLM agent loop (max 10 turns) with two "blinded" tools that dispatch directly to `IAClient`:
+`InternetArchiveAgent` (`internet_archive_agent.py`) runs a structured LLM agent loop (max 10 turns) with two "blinded" tools that dispatch directly to `InternetArchiveClient`:
 
 - **`search_images`** — Lucene boolean keywords, optional collection/date filter. Mediatype:image is enforced by the client.
 - **`find_collections`** — Discover IA collections by keyword. Mediatype:collection is enforced.
 
 Supporting files:
-- **`clients/internet_archive_client.py`** — `IAClient` wraps the `internetarchive` Python library. Three methods: `search_images()`, `find_collections()`, `get_curated_collections()`. All enforce correct mediatypes.
+- **`clients/internet_archive_client.py`** — `InternetArchiveClient` wraps the `internetarchive` Python library. Three methods: `search_images()`, `find_collections()`, `get_curated_collections()`. All enforce correct mediatypes.
 - **`thumbnails.py`** — `download_thumbnails()` async batch downloader using httpx
 
 ### Stage 2: Curation (`src/llomax/search/curator.py`)
