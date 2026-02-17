@@ -1,5 +1,3 @@
-"""Curator agent that selects the best assets from search candidates."""
-
 from __future__ import annotations
 
 import json

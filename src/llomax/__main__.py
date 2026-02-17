@@ -1,10 +1,3 @@
-"""Run the llomax pipeline from the command line.
-
-Usage:
-    uv run llomax "vintage botanical illustrations"
-    uv run llomax "nasa space photos" --canvas 1920x1080
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -24,6 +17,12 @@ def _parse_canvas(value: str) -> tuple[int, int]:
 
 
 async def _run(prompt: str, canvas_size: tuple[int, int]) -> None:
+    """Run the pipeline with the given prompt and canvas size.
+
+    Args:
+        prompt: Creative text prompt describing the desired collage.
+        canvas_size: ``(width, height)`` in pixels.
+    """
     agent = InternetArchiveAgent()
     client = PlaceholderAnalysisClient()
     pipeline = Pipeline(search_agent=agent, analysis_client=client)

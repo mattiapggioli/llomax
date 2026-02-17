@@ -1,5 +1,3 @@
-"""Internet Archive client wrapping the ``internetarchive`` library."""
-
 from __future__ import annotations
 
 from typing import Required, TypedDict
@@ -53,6 +51,8 @@ CURATED_COLLECTIONS = [
 
 
 class ImageResult(TypedDict, total=False):
+    """A single image result from an Internet Archive search."""
+
     identifier: Required[str]
     title: str
     creator: str
@@ -63,6 +63,8 @@ class ImageResult(TypedDict, total=False):
 
 
 class CollectionResult(TypedDict, total=False):
+    """A single collection result from an Internet Archive search."""
+
     identifier: Required[str]
     title: str
     description: str
@@ -70,6 +72,8 @@ class CollectionResult(TypedDict, total=False):
 
 
 class CuratedCollection(TypedDict):
+    """A hardcoded curated Internet Archive collection."""
+
     identifier: str
     title: str
     description: str
@@ -85,6 +89,7 @@ class IAClient:
         date_filter: str | None = None,
         max_results: int = 20,
     ) -> list[ImageResult]:
+        """Search for images using Lucene keywords, with optional collection and date filters."""
         query = f"({keywords}) AND mediatype:image"
         if collection:
             query += f" AND collection:{collection}"
@@ -115,6 +120,7 @@ class IAClient:
         keywords: str,
         max_results: int = 10,
     ) -> list[CollectionResult]:
+        """Search for Internet Archive collections by keyword."""
         query = f"({keywords}) AND mediatype:collection"
 
         results: list[CollectionResult] = []
@@ -136,4 +142,5 @@ class IAClient:
         return results
 
     def get_curated_collections(self) -> list[CuratedCollection]:
+        """Return the hardcoded list of curated collections."""
         return list(CURATED_COLLECTIONS)

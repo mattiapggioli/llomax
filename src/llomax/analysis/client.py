@@ -1,5 +1,3 @@
-"""Analysis client protocol and placeholder implementation."""
-
 from __future__ import annotations
 
 from typing import Protocol

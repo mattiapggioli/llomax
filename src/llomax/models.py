@@ -1,5 +1,3 @@
-"""Domain models shared across the llomax pipeline stages."""
-
 from __future__ import annotations
 
 from dataclasses import dataclass

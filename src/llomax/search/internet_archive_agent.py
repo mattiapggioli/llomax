@@ -1,5 +1,3 @@
-"""IA Specialist Agent using structured tool dispatch."""
-
 from __future__ import annotations
 
 import json
@@ -92,6 +90,7 @@ def _dispatch_tool(
     tool_name: str,
     tool_input: dict,
 ) -> str:
+    """Route a tool call to the corresponding IAClient method and return JSON."""
     match tool_name:
         case "find_collections":
             results = ia_client.find_collections(keywords=tool_input["keywords"])
@@ -108,7 +107,7 @@ def _dispatch_tool(
 
 
 class InternetArchiveAgent:
-    """Specialist agent that uses Claude with blinded IA tools."""
+    """Agent that uses Claude with blinded IA tools."""
 
     def __init__(
         self,
@@ -116,11 +115,21 @@ class InternetArchiveAgent:
         anthropic_client: anthropic.AsyncAnthropic | None = None,
         ia_client: IAClient | None = None,
     ):
+        """Initialize the agent.
+
+        Args:
+            model: Claude model ID for the agent loop.
+            anthropic_client: Anthropic async client. Created automatically
+                if not provided.
+            ia_client: Internet Archive client for executing tool calls.
+                Created automatically if not provided.
+        """
         self.model = model
         self.client = anthropic_client or anthropic.AsyncAnthropic()
         self.ia_client = ia_client or IAClient()
 
     async def search(self, prompt: str) -> list[ImageResult]:
+        """Run the agent loop and return deduplicated image results."""
         results_by_id: dict[str, ImageResult] = {}
         messages: list = [{"role": "user", "content": prompt}]
 

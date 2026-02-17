@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 uv sync                              # Install dependencies
-uv run pytest tests/ -v              # Run all tests (37 tests)
+uv run pytest tests/ -v              # Run all tests
 uv run pytest tests/test_search_agent.py -v   # Run a single test file
 uv run pytest tests/ -k "test_name"  # Run a specific test by name
 uv run ruff check src/ tests/        # Lint
@@ -64,20 +64,7 @@ All are `@dataclass` types.
 - `from __future__ import annotations` in all modules.
 - Protocol-based abstractions for swappable backends (see `AnalysisClient`).
 - Each package has explicit `__all__` exports in `__init__.py`.
-
-## Internet Archive Client Reference
-
-The search stage uses the `internetarchive` Python library directly via `IAClient` (`src/llomax/search/clients/internet_archive_client.py`). Three methods:
-
-| Method | Parameters | Returns |
-|--------|-----------|---------|
-| `search_images` | `keywords` (required), `collection=None`, `date_filter=None`, `max_results=20` | `list[ImageResult]` — `{identifier, title, creator, date, description, thumbnail_url, details_url}` |
-| `find_collections` | `keywords` (required), `max_results=10` | `list[CollectionResult]` — `{identifier, title, description, details_url}` |
-| `get_curated_collections` | none | `list[CuratedCollection]` — curated collections (nasa, flickrcommons, smithsonian, etc.) |
-
-- `thumbnail_url`: `https://archive.org/services/img/{identifier}` (low-res preview)
-- `details_url`: `https://archive.org/details/{identifier}` (item page)
-- Full-resolution download: `https://archive.org/download/{identifier}/{filename}`
+- No module-level docstrings. Classes, methods, and functions use Google-style docstrings.
 
 ## Environment
 

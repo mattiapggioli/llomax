@@ -1,5 +1,3 @@
-"""llomax — LLM agent-based pipeline for creating artistic collages."""
-
 from dotenv import load_dotenv
 
 load_dotenv()

@@ -1,5 +1,3 @@
-"""End-to-end collage pipeline orchestrating search, analysis, and composition."""
-
 from __future__ import annotations
 
 import os
@@ -28,6 +26,15 @@ class Pipeline:
             [list[AnalysisResult], tuple[int, int]], CollageOutput
         ] = default_compose,
     ) -> None:
+        """Initialize the pipeline.
+
+        Args:
+            search_agent: Agent for discovering images on the Internet Archive.
+            analysis_client: Backend for extracting visual elements from images.
+            anthropic_client: Anthropic async client for the curator stage.
+                Defaults to the search agent's client.
+            compose_fn: Callable that arranges elements onto a canvas.
+        """
         self.search_agent = search_agent
         self.analysis_client = analysis_client
         self.anthropic_client = anthropic_client or search_agent.client
