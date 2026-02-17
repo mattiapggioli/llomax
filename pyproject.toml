@@ -11,6 +11,9 @@ dependencies = [
     "python-dotenv",
 ]
 
+[project.scripts]
+llomax = "llomax.__main__:cli"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"

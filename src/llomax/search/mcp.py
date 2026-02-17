@@ -29,7 +29,7 @@ async def open_mcp_session(server_path: str) -> AsyncIterator[ClientSession]:
     """
     server_params = StdioServerParameters(
         command="uv",
-        args=["run", "--directory", server_path, "internet-archive-mcp"],
+        args=["run", "--directory", server_path, "python", "-m", "internet_archive_mcp"],
     )
     async with stdio_client(server_params) as (read_stream, write_stream):
         async with ClientSession(read_stream, write_stream) as session:
