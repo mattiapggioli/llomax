@@ -155,8 +155,9 @@ class InternetArchiveAgent:
                 if block.name == "search_images":
                     for item in json.loads(result_text):
                         ident = item.get("identifier", "")
-                        if ident:
-                            results_by_id.setdefault(ident, item)
+                        if not ident:
+                            continue
+                        results_by_id.setdefault(ident, item)
 
                 tool_results.append(
                     {

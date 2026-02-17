@@ -52,16 +52,20 @@ class Pipeline:
         seen: dict[str, dict] = {}
         for item in raw_results:
             ident = item.get("identifier", "")
-            if ident and ident not in seen:
-                seen[ident] = {
-                    "identifier": ident,
-                    "title": item.get("title", ""),
-                    "description": item.get("description", ""),
-                    "year": item.get("date", "")[:4] if item.get("date") else "",
-                }
-        sanitized = list(seen.values())
 
-        selected_ids = await select_assets(prompt, sanitized, self.anthropic_client)
+            if not ident or ident in seen:
+                continue
+
+            seen[ident] = {
+                "identifier": ident,
+                "title": item.get("title", ""),
+                "description": item.get("description", ""),
+                "year": item.get("date", "")[:4] if item.get("date") else "",
+            }
+
+        filtered_results = list(seen.values())
+
+        selected_ids = await select_assets(prompt, filtered_results, self.anthropic_client)
 
         selected_set = set(selected_ids)
         search_results = [
@@ -80,9 +84,10 @@ class Pipeline:
         seen_ids: set[str] = set()
         deduped: list[SearchResult] = []
         for sr in search_results:
-            if sr.identifier not in seen_ids:
-                seen_ids.add(sr.identifier)
-                deduped.append(sr)
+            if sr.identifier in seen_ids:
+                continue
+            seen_ids.add(sr.identifier)
+            deduped.append(sr)
         search_results = deduped
 
         await download_thumbnails(search_results)
