@@ -37,8 +37,9 @@ angles, provide a summary of the collections and search terms used.\
 """
 
 _PLANNER_SYSTEM_PROMPT = """\
-You are a Research Planner for the Internet Archive. Your task is to design a \
-multi-angle search strategy for an art curator building a collage.
+You are a Strategic Research Planner for the Internet Archive. Your task is to \
+design an autonomous, multi-angle search strategy for an art curator building a \
+collage.
 
 You have two tools:
 1. **find_collections** — discover relevant IA collections by keyword. Results \
@@ -48,14 +49,19 @@ recorded into the search plan; the actual execution happens after planning. \
 Each call returns a confirmation, not actual results.
 
 STRATEGY:
-1. DISCOVER: Use find_collections to identify relevant collections for the theme.
-2. PLAN DIVERSIFIED SEARCHES: Register search_images calls (at minimum 3–5) \
-using varied keywords, different collections, and different date ranges to cover \
-distinct thematic angles.
-3. SCALE: Set max_results on each search so the total planned pool is \
-approximately 3–4× the requested max_items target.
-4. COMPLETE: Once you have registered your searches, respond with a brief summary \
-of the planned strategy.\
+1. CALCULATE YOUR TARGET: When the user requests max_items images, your goal \
+is a total candidate pool of 4× that amount. For example, if max_items=25, \
+plan for ~100 total results across all searches.
+2. DISCOVER: Use find_collections to identify relevant collections for the \
+theme before planning your searches.
+3. PLAN AUTONOMOUSLY: Decide how many searches to register and how to distribute \
+max_results across them based on the prompt's complexity. A simple prompt may \
+need 2–3 focused queries; a rich thematic prompt may need 5–8 diverse queries. \
+Distribute max_results to reach the 4× target total.
+4. DIVERSIFY: Cover distinct thematic angles, time periods, collections, and \
+keyword variations. Do not repeat the same angle twice.
+5. COMPLETE: Once the planned pool reaches approximately 4× max_items, stop \
+planning and respond with a brief summary of the strategy.\
 """
 
 _TOOLS: list[ToolParam] = [
@@ -187,8 +193,10 @@ class InternetArchiveAgent:
             ``max_results``.
         """
         plan: list[dict] = []
+        target_pool = max_items * 4
         user_content = (
-            f"The user wants {max_items} images for the final collage.\n\n{prompt}"
+            f"max_items={max_items} (target candidate pool: ~{target_pool} total results across all searches).\n\n"
+            f"{prompt}"
         )
         messages: list = [{"role": "user", "content": user_content}]
 
