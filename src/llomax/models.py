@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from pathlib import Path
 
 from PIL import Image
 
@@ -28,6 +29,47 @@ class SearchResult:
 
 
 @dataclass
+class EntityItem:
+    """A detected entity crop extracted from an Internet Archive image.
+
+    Attributes:
+        item_id: Unique identifier for this crop, formed as
+            ``"{parent_image_id}_{label}_{index}"``.
+        parent_image_id: Internet Archive identifier of the source image.
+        size: ``(width, height)`` in pixels of the cropped region.
+        label: Detection class label (e.g. ``"person"``, ``"chair"``).
+        metadata: Key fields from the parent image: ``title``, ``year``,
+            ``archive_url``, and ``creator``.
+        file_path: Local path to the saved crop file, or ``None`` if
+            the crop has not been persisted to disk.
+        image: In-memory crop as a PIL Image, or ``None`` if not loaded.
+            Populated directly by analysis clients to avoid redundant disk
+            reads during composition.
+    """
+
+    item_id: str
+    parent_image_id: str
+    size: tuple[int, int]
+    label: str
+    metadata: dict
+    file_path: Path | None = None
+    image: Image.Image | None = None
+
+    def load_image(self) -> Image.Image | None:
+        """Return the crop as a PIL Image, loading from disk if needed.
+
+        Returns:
+            The in-memory image if set, otherwise the image loaded from
+            ``file_path``, or ``None`` if neither is available.
+        """
+        if self.image is not None:
+            return self.image
+        if self.file_path is not None and self.file_path.exists():
+            return Image.open(self.file_path)
+        return None
+
+
+@dataclass
 class AnalysisResult:
     """A cropped visual element extracted from a search result image.
 
@@ -46,14 +88,18 @@ class AnalysisResult:
 
 @dataclass
 class CollageOutput:
-    """Final composed collage image with its dimensions.
+    """Final composed collage image with its dimensions and provenance.
 
     Attributes:
         image: The composed collage as a PIL Image.
         width: Canvas width in pixels.
         height: Canvas height in pixels.
+        entity_provenance: Metadata records for each entity crop placed
+            in the collage, preserving the link to the source IA item.
+            Empty list when provenance tracking is unavailable.
     """
 
     image: Image.Image
     width: int
     height: int
+    entity_provenance: list[dict] = field(default_factory=list)

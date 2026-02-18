@@ -4,10 +4,11 @@ import os
 from typing import Callable
 
 import anthropic
+from PIL import Image
 
 from llomax.analysis.client import AnalysisClient
 from llomax.composition.composer import compose as default_compose
-from llomax.models import AnalysisResult, CollageOutput, SearchResult
+from llomax.models import CollageOutput, EntityItem, SearchResult
 from llomax.output import save_run
 from llomax.search.clients.internet_archive_client import ImageResult
 from llomax.search.curator import select_assets
@@ -16,7 +17,7 @@ from llomax.search.thumbnails import download_thumbnails
 
 
 class Pipeline:
-    """Multi-stage pipeline: discovery -> curation -> analysis -> composition."""
+    """Multi-stage pipeline: discovery -> analysis -> curation -> composition."""
 
     def __init__(
         self,
@@ -24,17 +25,17 @@ class Pipeline:
         analysis_client: AnalysisClient,
         anthropic_client: anthropic.AsyncAnthropic | None = None,
         compose_fn: Callable[
-            [list[AnalysisResult], tuple[int, int]], CollageOutput
+            [list[EntityItem], tuple[int, int], Image.Image | None], CollageOutput
         ] = default_compose,
     ) -> None:
         """Initialize the pipeline.
 
         Args:
             search_agent: Agent for discovering images on the Internet Archive.
-            analysis_client: Backend for extracting visual elements from images.
+            analysis_client: Backend for extracting visual entity crops from images.
             anthropic_client: Anthropic async client for the curator stage.
                 Defaults to the search agent's client.
-            compose_fn: Callable that arranges elements onto a canvas.
+            compose_fn: Callable that arranges entity crops onto a canvas.
         """
         self.search_agent = search_agent
         self.analysis_client = analysis_client
@@ -47,25 +48,50 @@ class Pipeline:
         canvas_size: tuple[int, int] = (1024, 1024),
         max_items: int = 20,
     ) -> CollageOutput:
-        """Execute the full pipeline from prompt to collage."""
-        # Stage 1a: Plan searches — the LLM only registers intents, sees no raw results.
+        """Execute the full pipeline from prompt to collage.
+
+        Pipeline stages:
+        1. ``plan_search`` — LLM registers search intents (no raw data in context).
+        2. ``_execute_search_plan`` — Python layer runs each query directly.
+        3. Download thumbnails for all candidate images.
+        4. ``analysis_client.analyze`` — Detect entities and produce crops.
+        5. ``select_assets`` — Curator selects the best entity crops.
+        6. ``compose_fn`` — Paste selected crops onto the background.
+        7. ``save_run`` — Persist collage and provenance metadata.
+
+        Args:
+            prompt: Creative text prompt describing the desired collage.
+            canvas_size: ``(width, height)`` in pixels for the output canvas.
+            max_items: Target number of entity crops in the final collage.
+
+        Returns:
+            The composed ``CollageOutput``.
+        """
+        # Stage 1: Plan searches without exposing raw results to the LLM.
         search_plan = await self.search_agent.plan_search(prompt, max_items=max_items)
 
-        # Stage 1b: Execute plan directly in Python, keeping raw data out of LLM context.
+        # Stage 2: Execute plan directly in Python.
         raw_results = self._execute_search_plan(search_plan)
 
-        # Stage 2: Curation with sanitized candidates.
-        candidates = self._sanitize(raw_results)
-        selected_ids = await select_assets(
-            prompt, candidates, self.anthropic_client, max_items=max_items
-        )
-        search_results = self._build_search_results(raw_results, selected_ids)
-
+        # Stage 3: Build search result objects and download thumbnails.
+        search_results = self._build_search_results_from_raw(raw_results)
         await download_thumbnails(search_results)
 
-        elements = await self.analysis_client.analyze(search_results)
-        collage = self.compose_fn(elements, canvas_size)
+        # Stage 4: Detect entities from all downloaded images.
+        entity_items = await self.analysis_client.analyze(search_results)
 
+        # Stage 5: Curate entity crops.
+        selected_ids = await select_assets(
+            prompt, entity_items, self.anthropic_client, max_items=max_items
+        )
+        selected_set = set(selected_ids)
+        selected_items = [e for e in entity_items if e.item_id in selected_set]
+
+        # Stage 6: Compose with the first available image as background.
+        background = next((r.image for r in search_results if r.image is not None), None)
+        collage = self.compose_fn(selected_items, canvas_size, background)
+
+        # Stage 7: Save output.
         output_dir = os.environ.get("OUTPUT_DIR", "output")
         save_run(collage, search_results, prompt, canvas_size, output_dir)
 
@@ -95,46 +121,20 @@ class Pipeline:
                     seen[ident] = result
         return list(seen.values())
 
-    def _sanitize(self, raw_results: list[ImageResult]) -> list[dict]:
-        """Deduplicate raw results and extract curator-relevant fields.
+    def _build_search_results_from_raw(self, raw_results: list[ImageResult]) -> list[SearchResult]:
+        """Build SearchResult objects for all raw results.
 
         Args:
-            raw_results: Raw image results from the search agent.
+            raw_results: Raw image results from the search plan execution.
 
         Returns:
-            Deduplicated list of dicts with identifier, title, description, year.
+            Deduplicated list of SearchResult objects ready for thumbnail download.
         """
-        seen: dict[str, dict] = {}
-        for item in raw_results:
-            ident = item.get("identifier", "")
-            if not ident or ident in seen:
-                continue
-            seen[ident] = {
-                "identifier": ident,
-                "title": item.get("title", ""),
-                "description": item.get("description", ""),
-                "year": item.get("date", "")[:4] if item.get("date") else "",
-            }
-        return list(seen.values())
-
-    def _build_search_results(
-        self, raw_results: list[ImageResult], selected_ids: list[str]
-    ) -> list[SearchResult]:
-        """Build deduplicated SearchResult objects for the selected identifiers.
-
-        Args:
-            raw_results: Raw image results from the search agent.
-            selected_ids: Identifiers chosen by the curator.
-
-        Returns:
-            Deduplicated list of SearchResult objects.
-        """
-        selected_set = set(selected_ids)
         seen_ids: set[str] = set()
         results: list[SearchResult] = []
         for item in raw_results:
             ident = item.get("identifier", "")
-            if ident not in selected_set or ident in seen_ids:
+            if not ident or ident in seen_ids:
                 continue
             seen_ids.add(ident)
             results.append(

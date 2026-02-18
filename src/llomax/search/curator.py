@@ -4,44 +4,58 @@ import json
 
 import anthropic
 
+from llomax.models import EntityItem
+
 _CURATOR_MODEL = "claude-sonnet-4-5-20250929"
 
 _SYSTEM_PROMPT = """\
-You are an art curator selecting images for a collage. Given a creative prompt \
-and a list of candidate images from the Internet Archive, select the best ones \
-based on:
+You are an art curator selecting entity crops for a collage. Given a creative \
+prompt and a list of candidate image crops detected from Internet Archive items, \
+select the best ones based on:
 
 1. **Relevance** to the creative prompt
-2. **Visual diversity** — prefer a mix of subjects, styles, and time periods
-3. **Aesthetic quality** — prefer items with descriptive titles and rich metadata
+2. **Visual diversity** — prefer a mix of entity labels, source images, and eras
+3. **Aesthetic quality** — prefer crops from items with rich, descriptive titles
 
-Return ONLY a JSON array of selected identifier strings. No explanation, no \
-markdown fences, just the raw JSON array. Example: ["id1", "id2", "id3"]\
+Return ONLY a JSON array of selected item_id strings. No explanation, no \
+markdown fences, just the raw JSON array. \
+Example: ["img1_person_0", "img2_chair_1"]\
 """
 
 
 async def select_assets(
     prompt: str,
-    candidates: list[dict],
+    candidates: list[EntityItem],
     anthropic_client: anthropic.AsyncAnthropic,
     max_items: int = 20,
 ) -> list[str]:
-    """Select the best candidates for the collage via a single LLM call.
+    """Select the best entity crop candidates for the collage via a single LLM call.
 
     Args:
         prompt: The user's creative prompt.
-        candidates: Sanitized candidate dicts with keys:
-            identifier, title, description, year.
+        candidates: Detected entity crops as ``EntityItem`` objects.
         anthropic_client: Anthropic async client instance.
         max_items: Maximum number of items to select.
 
     Returns:
-        List of selected identifier strings.
+        List of selected ``item_id`` strings.
     """
+    summaries = [
+        {
+            "item_id": e.item_id,
+            "label": e.label,
+            "parent": e.parent_image_id,
+            "title": e.metadata.get("title", ""),
+            "year": e.metadata.get("year", ""),
+            "size": list(e.size),
+        }
+        for e in candidates
+    ]
+
     user_message = (
         f"Creative prompt: {prompt}\n\n"
-        f"Select up to {max_items} images from these candidates:\n\n"
-        + json.dumps(candidates, indent=2)
+        f"Select up to {max_items} entity crops from these candidates:\n\n"
+        + json.dumps(summaries, indent=2)
     )
 
     response = await anthropic_client.messages.create(

@@ -99,3 +99,29 @@ def test_save_run_returns_path(tmp_path):
 
     assert run_dir.is_dir()
     assert run_dir.parent == tmp_path
+
+
+def test_save_run_includes_entity_crops(tmp_path):
+    provenance = [
+        {
+            "item_id": "img_person_0",
+            "parent_image_id": "img",
+            "label": "person",
+            "size": [80, 120],
+            "position": [10, 20],
+            "metadata": {"title": "Test", "year": "1900", "archive_url": "", "creator": ""},
+        }
+    ]
+    collage = CollageOutput(
+        image=Image.new("RGB", (100, 100), "white"),
+        width=100,
+        height=100,
+        entity_provenance=provenance,
+    )
+    run_dir = save_run(collage, [], "prompt", (100, 100), tmp_path)
+    metadata = json.loads((run_dir / "metadata.json").read_text())
+
+    assert "entity_crops" in metadata
+    assert len(metadata["entity_crops"]) == 1
+    assert metadata["entity_crops"][0]["item_id"] == "img_person_0"
+    assert metadata["entity_crops"][0]["label"] == "person"

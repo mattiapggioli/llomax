@@ -17,11 +17,13 @@ def save_run(
     """Save a collage and metadata to a timestamped subdirectory.
 
     Creates ``{output_dir}/{YYYY-MM-DD_HH-MM-SS}/`` containing
-    ``collage.png`` and ``metadata.json``.
+    ``collage.png`` and ``metadata.json``. The metadata includes the
+    source images used and the provenance of each entity crop placed
+    in the collage.
 
     Args:
         collage: The composed collage output.
-        search_results: Source images used in the collage.
+        search_results: Source images downloaded during the pipeline run.
         prompt: The original search prompt.
         canvas_size: ``(width, height)`` of the canvas.
         output_dir: Base directory for pipeline outputs.
@@ -49,6 +51,7 @@ def save_run(
             }
             for r in search_results
         ],
+        "entity_crops": collage.entity_provenance,
     }
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
 

@@ -13,6 +13,7 @@ def sample_results():
             title=f"Image {i}",
             thumbnail_url=f"https://archive.org/services/img/img{i}",
             details_url=f"https://archive.org/details/img{i}",
+            year="1900",
             image=Image.new("RGB", (100, 100), "red"),
         )
         for i in range(3)
@@ -34,14 +35,29 @@ async def test_placeholder_labels_unknown(sample_results):
 async def test_placeholder_preserves_identifiers(sample_results):
     client = PlaceholderAnalysisClient()
     results = await client.analyze(sample_results)
-    assert [r.source_identifier for r in results] == ["img0", "img1", "img2"]
+    assert [r.parent_image_id for r in results] == ["img0", "img1", "img2"]
+
+
+async def test_placeholder_item_ids_derived_from_identifier(sample_results):
+    client = PlaceholderAnalysisClient()
+    results = await client.analyze(sample_results)
+    for r in results:
+        assert r.item_id.startswith(r.parent_image_id)
 
 
 async def test_placeholder_preserves_images(sample_results):
     client = PlaceholderAnalysisClient()
     results = await client.analyze(sample_results)
-    for orig, analyzed in zip(sample_results, results):
-        assert analyzed.image is orig.image
+    for orig, entity in zip(sample_results, results):
+        assert entity.image is orig.image
+
+
+async def test_placeholder_metadata_includes_title_and_year(sample_results):
+    client = PlaceholderAnalysisClient()
+    results = await client.analyze(sample_results)
+    for i, entity in enumerate(results):
+        assert entity.metadata["title"] == f"Image {i}"
+        assert entity.metadata["year"] == "1900"
 
 
 async def test_placeholder_skips_results_without_image():

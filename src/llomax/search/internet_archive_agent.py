@@ -154,9 +154,7 @@ class InternetArchiveAgent:
             max_items: Target number of images for the final collage.
         """
         results_by_id: dict[str, ImageResult] = {}
-        user_content = (
-            f"The user wants {max_items} images for the final collage.\n\n{prompt}"
-        )
+        user_content = f"The user wants {max_items} images for the final collage.\n\n{prompt}"
         messages: list = [{"role": "user", "content": user_content}]
 
         for _ in range(MAX_AGENT_TURNS):

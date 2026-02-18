@@ -11,7 +11,7 @@ from llomax.search.internet_archive_agent import (
 )
 from PIL import Image
 
-from llomax.models import SearchResult
+from llomax.models import EntityItem, SearchResult
 from llomax.search.clients.internet_archive_client import InternetArchiveClient, ImageResult
 from llomax.search.curator import select_assets
 from llomax.search.thumbnails import download_thumbnails
@@ -135,9 +135,7 @@ class TestDispatchTool:
         mock_client = MagicMock(spec=InternetArchiveClient)
         mock_client.search_images.return_value = []
         agent = self._make_agent(mock_client)
-        agent._dispatch_tool(
-            "search_images", {"keywords": "test", "max_results": 50}
-        )
+        agent._dispatch_tool("search_images", {"keywords": "test", "max_results": 50})
         mock_client.search_images.assert_called_once_with(
             keywords="test", collection=None, date_filter=None, max_results=50
         )
@@ -279,37 +277,47 @@ class TestInternetArchiveAgent:
 # ---------------------------------------------------------------------------
 
 
+def _make_entity(item_id: str, parent_id: str, label: str = "person") -> EntityItem:
+    return EntityItem(
+        item_id=item_id,
+        parent_image_id=parent_id,
+        size=(100, 100),
+        label=label,
+        metadata={"title": parent_id.upper(), "year": "1900", "archive_url": "", "creator": ""},
+    )
+
+
 class TestCurator:
     async def test_selects_identifiers(self):
         mock_response = MagicMock()
         text_block = MagicMock()
         text_block.type = "text"
-        text_block.text = '["id1", "id3"]'
+        text_block.text = '["id1_person_0", "id3_person_0"]'
         mock_response.content = [text_block]
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         candidates = [
-            {"identifier": "id1", "title": "A", "description": "", "year": ""},
-            {"identifier": "id2", "title": "B", "description": "", "year": ""},
-            {"identifier": "id3", "title": "C", "description": "", "year": ""},
+            _make_entity("id1_person_0", "id1"),
+            _make_entity("id2_person_0", "id2"),
+            _make_entity("id3_person_0", "id3"),
         ]
         selected = await select_assets("prompt", candidates, mock_client)
-        assert selected == ["id1", "id3"]
+        assert selected == ["id1_person_0", "id3_person_0"]
 
     async def test_handles_markdown_fenced_json(self):
         mock_response = MagicMock()
         text_block = MagicMock()
         text_block.type = "text"
-        text_block.text = '```json\n["id1"]\n```'
+        text_block.text = '```json\n["id1_person_0"]\n```'
         mock_response.content = [text_block]
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         selected = await select_assets("prompt", [], mock_client)
-        assert selected == ["id1"]
+        assert selected == ["id1_person_0"]
 
     async def test_handles_non_list_response(self):
         mock_response = MagicMock()
@@ -328,18 +336,18 @@ class TestCurator:
         mock_response = MagicMock()
         text_block = MagicMock()
         text_block.type = "text"
-        text_block.text = '["id1", "id2"]'
+        text_block.text = '["id1_person_0", "id2_person_0"]'
         mock_response.content = [text_block]
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         candidates = [
-            {"identifier": "id1", "title": "A", "description": "", "year": ""},
-            {"identifier": "id2", "title": "B", "description": "", "year": ""},
+            _make_entity("id1_person_0", "id1"),
+            _make_entity("id2_person_0", "id2"),
         ]
         selected = await select_assets("prompt", candidates, mock_client, max_items=5)
-        assert selected == ["id1", "id2"]
+        assert selected == ["id1_person_0", "id2_person_0"]
         user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
         assert "up to 5" in user_msg
 
@@ -347,14 +355,31 @@ class TestCurator:
         mock_response = MagicMock()
         text_block = MagicMock()
         text_block.type = "text"
-        text_block.text = '["id1", 42, "id2", null]'
+        text_block.text = '["id1_person_0", 42, "id2_person_0", null]'
         mock_response.content = [text_block]
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         selected = await select_assets("prompt", [], mock_client)
-        assert selected == ["id1", "id2"]
+        assert selected == ["id1_person_0", "id2_person_0"]
+
+    async def test_candidate_summaries_sent_to_llm(self):
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "[]"
+        mock_response.content = [text_block]
+
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        candidates = [_make_entity("img_person_0", "img")]
+        await select_assets("prompt", candidates, mock_client)
+
+        user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
+        assert "img_person_0" in user_msg
+        assert "person" in user_msg
 
 
 # ---------------------------------------------------------------------------
