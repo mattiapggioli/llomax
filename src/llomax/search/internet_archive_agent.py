@@ -12,24 +12,28 @@ MAX_AGENT_TURNS = 10
 _DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
 
 _SYSTEM_PROMPT = """\
-You are a creative search agent for the Internet Archive. Your goal is to find \
-diverse, high-quality images that match the user's creative prompt.
+You are a creative search agent for the Internet Archive. Your goal is to build \
+a high-quality, diverse candidate pool for an art curator.
 
 You have two tools:
-
 1. **find_collections** — discover relevant IA collections by keyword.
 2. **search_images** — search for images using Lucene boolean syntax in the \
-`keywords` field (AND, OR, NOT, groupings with parentheses). You can optionally \
-filter by collection and date range.
+`keywords` field. You can optionally filter by collection, date range, and set \
+max_results.
 
-Strategy:
-1. Optionally call find_collections to discover relevant collections.
-2. Issue multiple search_images calls with varied keywords, synonyms, and \
-   different angles to gather diverse material.
-3. Use Lucene boolean syntax for precise queries: e.g. "(botanical OR flora) AND \
-   illustration", "vintage AND (poster OR advertisement)".
-4. When you have gathered enough results (aim for 10-20+ unique images), stop \
-   and respond with a short text summary of what you found.\
+STRATEGY:
+1. DIVERSIFIED EXPLORATION: Do not settle for one search. Even if your first \
+query returns results, you MUST perform multiple additional searches (at least \
+3-5) using different keywords, synonyms, time periods (date_filter), or specific \
+collections (via find_collections).
+2. SEARCH SCALE: For every 'search_images' call, set 'max_results' to the target \
+count provided in the user's request. This ensures each specific angle you \
+explore contributes a meaningful set of candidates.
+3. QUALITY POOL: If the user wants 25 images, and you perform 4 diverse searches, \
+you will provide a pool of ~100 candidates. This allows the Curator to select \
+the absolute best items.
+4. FINAL RESPONSE: Once you have explored several distinct thematic or visual \
+angles, provide a summary of the collections and search terms used.\
 """
 
 _TOOLS: list[ToolParam] = [
@@ -78,6 +82,13 @@ _TOOLS: list[ToolParam] = [
                         "Will be wrapped as date:[VALUE]."
                     ),
                 },
+                "max_results": {
+                    "type": "integer",
+                    "description": (
+                        "Maximum number of results to return per call. "
+                        "Set this to the target count from the user's request."
+                    ),
+                },
             },
             "required": ["keywords"],
         },
@@ -107,10 +118,18 @@ class InternetArchiveAgent:
         self.client = anthropic_client or anthropic.AsyncAnthropic()
         self.ia_client = ia_client or InternetArchiveClient()
 
-    async def search(self, prompt: str) -> list[ImageResult]:
-        """Run the agent loop and return deduplicated image results."""
+    async def search(self, prompt: str, max_items: int = 20) -> list[ImageResult]:
+        """Run the agent loop and return deduplicated image results.
+
+        Args:
+            prompt: Creative text prompt describing the desired collage.
+            max_items: Target number of images for the final collage.
+        """
         results_by_id: dict[str, ImageResult] = {}
-        messages: list = [{"role": "user", "content": prompt}]
+        user_content = (
+            f"The user wants {max_items} images for the final collage.\n\n{prompt}"
+        )
+        messages: list = [{"role": "user", "content": user_content}]
 
         for _ in range(MAX_AGENT_TURNS):
             response = await self.client.messages.create(
@@ -145,11 +164,14 @@ class InternetArchiveAgent:
                 results = self.ia_client.find_collections(keywords=tool_input["keywords"])
                 return json.dumps(results)
             case "search_images":
-                results = self.ia_client.search_images(
-                    keywords=tool_input["keywords"],
-                    collection=tool_input.get("collection"),
-                    date_filter=tool_input.get("date_filter"),
-                )
+                kwargs: dict = {
+                    "keywords": tool_input["keywords"],
+                    "collection": tool_input.get("collection"),
+                    "date_filter": tool_input.get("date_filter"),
+                }
+                if tool_input.get("max_results") is not None:
+                    kwargs["max_results"] = tool_input["max_results"]
+                results = self.ia_client.search_images(**kwargs)
                 return json.dumps(results)
             case _:
                 return json.dumps({"error": f"Unknown tool: {tool_name}"})

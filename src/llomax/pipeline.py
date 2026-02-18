@@ -45,11 +45,14 @@ class Pipeline:
         self,
         prompt: str,
         canvas_size: tuple[int, int] = (1024, 1024),
+        max_items: int = 20,
     ) -> CollageOutput:
         """Execute the full pipeline from prompt to collage."""
-        raw_results = await self.search_agent.search(prompt)
+        raw_results = await self.search_agent.search(prompt, max_items=max_items)
         candidates = self._sanitize(raw_results)
-        selected_ids = await select_assets(prompt, candidates, self.anthropic_client)
+        selected_ids = await select_assets(
+            prompt, candidates, self.anthropic_client, max_items=max_items
+        )
         search_results = self._build_search_results(raw_results, selected_ids)
 
         await download_thumbnails(search_results)

@@ -131,6 +131,17 @@ class TestDispatchTool:
         result = agent._dispatch_tool("find_collections", {"keywords": "space"})
         assert json.loads(result) == []
 
+    def test_dispatch_search_images_forwards_max_results(self):
+        mock_client = MagicMock(spec=InternetArchiveClient)
+        mock_client.search_images.return_value = []
+        agent = self._make_agent(mock_client)
+        agent._dispatch_tool(
+            "search_images", {"keywords": "test", "max_results": 50}
+        )
+        mock_client.search_images.assert_called_once_with(
+            keywords="test", collection=None, date_filter=None, max_results=50
+        )
+
     def test_dispatch_unknown_tool(self):
         mock_client = MagicMock(spec=InternetArchiveClient)
         agent = self._make_agent(mock_client)
@@ -189,11 +200,13 @@ class TestInternetArchiveAgent:
         )
 
         agent = InternetArchiveAgent(anthropic_client=mock_anthropic, ia_client=mock_ia)
-        results = await agent.search("test prompt")
+        results = await agent.search("test prompt", max_items=10)
 
         assert len(results) == 1
         assert results[0]["identifier"] == "r1"
         assert mock_anthropic.messages.create.call_count == 2
+        first_call_messages = mock_anthropic.messages.create.call_args_list[0].kwargs["messages"]
+        assert "The user wants 10 images" in first_call_messages[0]["content"]
 
     async def test_deduplication(self):
         mock_ia = MagicMock(spec=InternetArchiveClient)
@@ -310,6 +323,25 @@ class TestCurator:
 
         selected = await select_assets("prompt", [], mock_client)
         assert selected == []
+
+    async def test_respects_max_items(self):
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = '["id1", "id2"]'
+        mock_response.content = [text_block]
+
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        candidates = [
+            {"identifier": "id1", "title": "A", "description": "", "year": ""},
+            {"identifier": "id2", "title": "B", "description": "", "year": ""},
+        ]
+        selected = await select_assets("prompt", candidates, mock_client, max_items=5)
+        assert selected == ["id1", "id2"]
+        user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
+        assert "up to 5" in user_msg
 
     async def test_filters_non_string_items(self):
         mock_response = MagicMock()

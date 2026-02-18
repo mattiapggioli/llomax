@@ -16,17 +16,18 @@ def _parse_canvas(value: str) -> tuple[int, int]:
     return int(parts[0]), int(parts[1])
 
 
-async def _run(prompt: str, canvas_size: tuple[int, int]) -> None:
+async def _run(prompt: str, canvas_size: tuple[int, int], max_items: int) -> None:
     """Run the pipeline with the given prompt and canvas size.
 
     Args:
         prompt: Creative text prompt describing the desired collage.
         canvas_size: ``(width, height)`` in pixels.
+        max_items: Target number of images for the final collage.
     """
     agent = InternetArchiveAgent()
     client = PlaceholderAnalysisClient()
     pipeline = Pipeline(search_agent=agent, analysis_client=client)
-    await pipeline.run(prompt, canvas_size=canvas_size)
+    await pipeline.run(prompt, canvas_size=canvas_size, max_items=max_items)
 
 
 def cli() -> None:
@@ -41,8 +42,14 @@ def cli() -> None:
         default="1024x1024",
         help="Canvas size as WIDTHxHEIGHT (default: 1024x1024)",
     )
+    parser.add_argument(
+        "--max-items",
+        type=int,
+        default=20,
+        help="Target number of images for the final collage (default: 20)",
+    )
     args = parser.parse_args()
-    asyncio.run(_run(args.prompt, args.canvas))
+    asyncio.run(_run(args.prompt, args.canvas, args.max_items))
 
 
 if __name__ == "__main__":
