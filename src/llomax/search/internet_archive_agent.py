@@ -36,6 +36,28 @@ the absolute best items.
 angles, provide a summary of the collections and search terms used.\
 """
 
+_PLANNER_SYSTEM_PROMPT = """\
+You are a Research Planner for the Internet Archive. Your task is to design a \
+multi-angle search strategy for an art curator building a collage.
+
+You have two tools:
+1. **find_collections** — discover relevant IA collections by keyword. Results \
+are returned immediately for your use in planning.
+2. **search_images** — register a search intent. Your call parameters are \
+recorded into the search plan; the actual execution happens after planning. \
+Each call returns a confirmation, not actual results.
+
+STRATEGY:
+1. DISCOVER: Use find_collections to identify relevant collections for the theme.
+2. PLAN DIVERSIFIED SEARCHES: Register search_images calls (at minimum 3–5) \
+using varied keywords, different collections, and different date ranges to cover \
+distinct thematic angles.
+3. SCALE: Set max_results on each search so the total planned pool is \
+approximately 3–4× the requested max_items target.
+4. COMPLETE: Once you have registered your searches, respond with a brief summary \
+of the planned strategy.\
+"""
+
 _TOOLS: list[ToolParam] = [
     {
         "name": "find_collections",
@@ -149,6 +171,45 @@ class InternetArchiveAgent:
 
         return list(results_by_id.values())
 
+    async def plan_search(self, prompt: str, max_items: int = 20) -> list[dict]:
+        """Run the planner agent loop and return the accumulated search plan.
+
+        The agent uses find_collections normally but search_images only registers
+        search intents — no actual IA image searches are executed during planning.
+
+        Args:
+            prompt: Creative text prompt describing the desired collage.
+            max_items: Target number of images for the final collage.
+
+        Returns:
+            List of search plan item dicts, each with at minimum a ``keywords``
+            key and optionally ``collection``, ``date_filter``, and
+            ``max_results``.
+        """
+        plan: list[dict] = []
+        user_content = (
+            f"The user wants {max_items} images for the final collage.\n\n{prompt}"
+        )
+        messages: list = [{"role": "user", "content": user_content}]
+
+        for _ in range(MAX_AGENT_TURNS):
+            response = await self.client.messages.create(
+                model=self.model,
+                max_tokens=1024,
+                system=_PLANNER_SYSTEM_PROMPT,
+                tools=_TOOLS,
+                messages=messages,
+            )
+
+            if response.stop_reason == "end_turn":
+                break
+
+            tool_results = self._process_planning_tool_calls(response, plan)
+            messages.append({"role": "assistant", "content": list(response.content)})
+            messages.append({"role": "user", "content": tool_results})
+
+        return plan
+
     def _dispatch_tool(self, tool_name: str, tool_input: dict) -> str:
         """Route a tool call to the corresponding InternetArchiveClient method and return JSON.
 
@@ -210,6 +271,46 @@ class InternetArchiveAgent:
 
             if block.name == "search_images":
                 self._collect_image_results(result_text, results_by_id)
+
+            tool_results.append(
+                {
+                    "type": "tool_result",
+                    "tool_use_id": block.id,
+                    "content": result_text,
+                }
+            )
+        return tool_results
+
+    def _process_planning_tool_calls(self, response, plan: list[dict]) -> list[dict]:
+        """Process tool calls in planning mode.
+
+        find_collections executes normally; search_images records parameters into
+        the plan and returns a confirmation instead of actual results.
+
+        Args:
+            response: Anthropic API response containing tool_use blocks.
+            plan: Accumulator for search plan items. Modified in place.
+
+        Returns:
+            List of tool_result message dicts.
+        """
+        tool_results = []
+        for block in response.content:
+            if block.type != "tool_use":
+                continue
+
+            if block.name == "search_images":
+                item: dict = {"keywords": block.input["keywords"]}
+                if block.input.get("collection"):
+                    item["collection"] = block.input["collection"]
+                if block.input.get("date_filter"):
+                    item["date_filter"] = block.input["date_filter"]
+                if block.input.get("max_results") is not None:
+                    item["max_results"] = block.input["max_results"]
+                plan.append(item)
+                result_text = json.dumps({"status": "Search parameters recorded in the plan"})
+            else:
+                result_text = self._dispatch_tool(block.name, block.input)
 
             tool_results.append(
                 {

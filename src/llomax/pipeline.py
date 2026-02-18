@@ -48,7 +48,13 @@ class Pipeline:
         max_items: int = 20,
     ) -> CollageOutput:
         """Execute the full pipeline from prompt to collage."""
-        raw_results = await self.search_agent.search(prompt, max_items=max_items)
+        # Stage 1a: Plan searches — the LLM only registers intents, sees no raw results.
+        search_plan = await self.search_agent.plan_search(prompt, max_items=max_items)
+
+        # Stage 1b: Execute plan directly in Python, keeping raw data out of LLM context.
+        raw_results = self._execute_search_plan(search_plan)
+
+        # Stage 2: Curation with sanitized candidates.
         candidates = self._sanitize(raw_results)
         selected_ids = await select_assets(
             prompt, candidates, self.anthropic_client, max_items=max_items
@@ -64,6 +70,30 @@ class Pipeline:
         save_run(collage, search_results, prompt, canvas_size, output_dir)
 
         return collage
+
+    def _execute_search_plan(self, plan: list[dict]) -> list[ImageResult]:
+        """Execute each item in the search plan and return deduplicated results.
+
+        Args:
+            plan: List of search plan items from plan_search.
+
+        Returns:
+            Deduplicated list of ImageResult items, keyed by identifier.
+        """
+        seen: dict[str, ImageResult] = {}
+        for item in plan:
+            kwargs: dict = {
+                "keywords": item["keywords"],
+                "collection": item.get("collection"),
+                "date_filter": item.get("date_filter"),
+            }
+            if item.get("max_results") is not None:
+                kwargs["max_results"] = item["max_results"]
+            for result in self.search_agent.ia_client.search_images(**kwargs):
+                ident = result.get("identifier", "")
+                if ident and ident not in seen:
+                    seen[ident] = result
+        return list(seen.values())
 
     def _sanitize(self, raw_results: list[ImageResult]) -> list[dict]:
         """Deduplicate raw results and extract curator-relevant fields.
