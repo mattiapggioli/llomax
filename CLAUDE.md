@@ -21,10 +21,15 @@ Pytest is configured with `asyncio_mode = "auto"` — async test functions run a
 
 ## Architecture
 
-Four-stage pipeline orchestrated by `Pipeline` (`src/llomax/pipeline.py`):
+Five-stage pipeline orchestrated by `Pipeline` (`src/llomax/pipeline.py`):
 
 ```
-InternetArchiveAgent.search(prompt) → Curation (select_assets) → AnalysisClient.analyze(results) → compose(elements, canvas_size)
+InternetArchiveAgent.plan_search(prompt)
+  → select_sources(candidates)          # LLM curator picks SourceImages
+  → download_thumbnails(sources)        # save to cache_dir/{id}.jpg
+  → AnalysisClient.analyze(sources)     # SAM segmentation → Fragments
+  → PlaceholderAnnotator.annotate()     # label + describe each Fragment
+  → compose(fragments, canvas_size)     # RGBA alpha-composite onto canvas
 ```
 
 ### Stage 1: Discovery (`src/llomax/search/`)
@@ -34,27 +39,41 @@ InternetArchiveAgent.search(prompt) → Curation (select_assets) → AnalysisCli
 - **`search_images`** — Lucene boolean keywords, optional collection/date filter. Mediatype:image is enforced by the client.
 - **`find_collections`** — Discover IA collections by keyword. Mediatype:collection is enforced.
 
+`plan_search()` records search intents without executing them; `_execute_search_plan()` in `Pipeline` runs them in Python.
+
 Supporting files:
 - **`clients/internet_archive_client.py`** — `InternetArchiveClient` wraps the `internetarchive` Python library. Three methods: `search_images()`, `find_collections()`, `get_curated_collections()`. All enforce correct mediatypes.
-- **`thumbnails.py`** — `download_thumbnails()` async batch downloader using httpx
+- **`thumbnails.py`** — `download_thumbnails(sources, cache_dir)` saves each thumbnail as `{cache_dir}/{external_id}.jpg` and sets `source.local_path`. Already-cached files are reused.
 
-### Stage 2: Curation (`src/llomax/search/curator.py`)
+### Stage 2: Source Selection (`src/llomax/search/curator.py`)
 
-`select_assets()` takes sanitized candidates (identifier, title, description, year) and makes a single Claude API call (claude-sonnet-4-5-20250929) to select the best assets for the collage. Returns a JSON array of selected identifiers. No tool use — structured output only.
+`select_sources()` takes `SourceImage` candidates (external_id, title, description, year, creator) and makes a single Claude API call (claude-sonnet-4-5-20250929) to select the best source images for the collage. Returns a JSON array of selected `external_id` strings. No tool use — structured output only.
 
-### Stage 3: Analysis (`src/llomax/analysis/`)
+### Stage 3: Segmentation (`src/llomax/analysis/`)
 
-`AnalysisClient` is a `Protocol` with a single method `analyze(images) -> list[AnalysisResult]`. Currently only `PlaceholderAnalysisClient` exists (passthrough, labels everything `"unknown"`). This is the main extension point — replace with a real NER/vision backend.
+`AnalysisClient` is a `Protocol` with a single async method `analyze(sources) -> list[Fragment]`.
 
-### Stage 4: Composition (`src/llomax/composition/`)
+- **`Segmenter`** (`segmenter.py`) — SAM `AutomaticMaskGenerator` backend. On first use it exports the SAM image encoder (ViT) to OpenVINO IR format and compiles it with `device_name="AUTO"` to target the Intel Arc GPU or NPU. Falls back to PyTorch CPU if OpenVINO is unavailable. Each mask becomes a `Fragment` with a transparent RGBA background. Also implements `analyze()` for protocol conformance.
+- **`PlaceholderAnalysisClient`** (`client.py`) — Passthrough: wraps each source image as a single full-frame `Fragment`. No model required; use for testing the pipeline end-to-end.
 
-`compose()` function places cropped elements onto a white canvas at random positions. Returns `CollageOutput` with the composed PIL Image.
+### Stage 4: Annotation (`src/llomax/analysis/annotator.py`)
+
+`PlaceholderAnnotator` implements the double-analysis structure:
+- `annotate_source(source)` — high-level context string for the full IA item.
+- `annotate_fragment(fragment, source)` — region-level description referencing parent metadata.
+- `annotate(sources, fragments)` — populates `fragment.description` in place for all fragments.
+
+Replace method bodies with live `anthropic.AsyncAnthropic` vision calls once a real backend is ready.
+
+### Stage 5: Composition (`src/llomax/composition/`)
+
+`compose(fragments, canvas_size, background)` places each `Fragment.image_rgba` at a random position using `PIL.Image.paste` with the alpha channel as a mask. Returns `CollageOutput` with the final RGB image.
 
 ### Domain Models (`src/llomax/models.py`)
 
-- `SearchResult` — Internet Archive item with identifier, title, URLs, description, year, optional downloaded `Image`
-- `AnalysisResult` — Cropped element with source identifier, entity label, `Image`
-- `CollageOutput` — Final composed `Image` with canvas dimensions
+- `SourceImage` — Internet Archive item: `external_id`, `title`, `description`, `local_path`, `metadata` dict (creator, year, thumbnail_url, details_url). `load_image()` reads from `local_path`.
+- `Fragment` — Extracted visual segment: `source_id`, `image_rgba` (RGBA PIL Image), `bounding_box` (x1,y1,x2,y2), `label`, `description`.
+- `CollageOutput` — Final composed RGB `Image` with canvas dimensions and `fragment_provenance` list.
 
 All are `@dataclass` types.
 
