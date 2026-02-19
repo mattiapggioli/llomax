@@ -2,33 +2,51 @@ from __future__ import annotations
 
 import logging
 from io import BytesIO
+from pathlib import Path
 
 import httpx
 from PIL import Image
 
-from llomax.models import SearchResult
+from llomax.models import SourceImage
 
 logger = logging.getLogger(__name__)
 
 
-async def download_thumbnails(results: list[SearchResult]) -> None:
-    """Download thumbnail images into each result's ``image`` field.
+async def download_thumbnails(
+    sources: list[SourceImage],
+    cache_dir: Path = Path("output/thumbnails"),
+) -> None:
+    """Download thumbnail images to disk and set ``local_path`` on each source.
 
-    Results without a ``thumbnail_url`` are skipped. Failed downloads
-    log a warning and leave ``image`` as ``None``.
+    Images are saved to ``cache_dir/{external_id}.jpg``. Sources without a
+    ``thumbnail_url`` in their metadata are skipped. Failed downloads log a
+    warning and leave ``local_path`` as ``None``. Already-cached files are
+    reused without re-downloading.
 
     Args:
-        results: Search results to populate with downloaded images.
-            Modified in place.
+        sources: Source images to populate with downloaded files.
+            ``local_path`` is set in place.
+        cache_dir: Directory for cached thumbnail files.
     """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+
     async with httpx.AsyncClient(timeout=30) as client:
-        for result in results:
-            if not result.thumbnail_url:
+        for source in sources:
+            thumbnail_url = source.metadata.get("thumbnail_url", "")
+            if not thumbnail_url:
                 continue
+
+            local_path = cache_dir / f"{source.external_id}.jpg"
+            if local_path.exists():
+                source.local_path = local_path
+                continue
+
             try:
-                resp = await client.get(result.thumbnail_url)
+                resp = await client.get(thumbnail_url)
                 resp.raise_for_status()
-                result.image = Image.open(BytesIO(resp.content))
-                result.image.load()
+                img = Image.open(BytesIO(resp.content))
+                img.load()
+                img.save(local_path)
+                source.local_path = local_path
             except Exception:
-                logger.warning("Failed to download thumbnail for %s", result.identifier)
+                logger.warning("Failed to download thumbnail for %s", source.external_id)

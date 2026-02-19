@@ -4,12 +4,12 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-from llomax.models import CollageOutput, SearchResult
+from llomax.models import CollageOutput, SourceImage
 
 
 def save_run(
     collage: CollageOutput,
-    search_results: list[SearchResult],
+    sources: list[SourceImage],
     prompt: str,
     canvas_size: tuple[int, int],
     output_dir: str | Path,
@@ -18,12 +18,12 @@ def save_run(
 
     Creates ``{output_dir}/{YYYY-MM-DD_HH-MM-SS}/`` containing
     ``collage.png`` and ``metadata.json``. The metadata includes the
-    source images used and the provenance of each entity crop placed
-    in the collage.
+    source images used and the provenance of each fragment placed in
+    the collage.
 
     Args:
         collage: The composed collage output.
-        search_results: Source images downloaded during the pipeline run.
+        sources: Source images downloaded during the pipeline run.
         prompt: The original search prompt.
         canvas_size: ``(width, height)`` of the canvas.
         output_dir: Base directory for pipeline outputs.
@@ -44,14 +44,14 @@ def save_run(
         "canvas_size": list(canvas_size),
         "sources": [
             {
-                "identifier": r.identifier,
-                "title": r.title,
-                "thumbnail_url": r.thumbnail_url,
-                "details_url": r.details_url,
+                "external_id": s.external_id,
+                "title": s.title,
+                "thumbnail_url": s.metadata.get("thumbnail_url", ""),
+                "details_url": s.metadata.get("details_url", ""),
             }
-            for r in search_results
+            for s in sources
         ],
-        "entity_crops": collage.entity_provenance,
+        "fragments": collage.fragment_provenance,
     }
     (run_dir / "metadata.json").write_text(json.dumps(metadata, indent=2) + "\n")
 

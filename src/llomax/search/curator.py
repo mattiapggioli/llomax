@@ -4,57 +4,56 @@ import json
 
 import anthropic
 
-from llomax.models import EntityItem
+from llomax.models import SourceImage
 
 _CURATOR_MODEL = "claude-sonnet-4-5-20250929"
 
 _SYSTEM_PROMPT = """\
-You are an art curator selecting entity crops for a collage. Given a creative \
-prompt and a list of candidate image crops detected from Internet Archive items, \
-select the best ones based on:
+You are an art curator selecting source images for a collage. Given a creative \
+prompt and a list of candidate images from the Internet Archive, select the best \
+ones based on:
 
 1. **Relevance** to the creative prompt
-2. **Visual diversity** — prefer a mix of entity labels, source images, and eras
-3. **Aesthetic quality** — prefer crops from items with rich, descriptive titles
+2. **Visual diversity** — prefer a mix of eras, creators, and subjects
+3. **Aesthetic quality** — prefer images with rich, descriptive titles and metadata
 
-Return ONLY a JSON array of selected item_id strings. No explanation, no \
+Return ONLY a JSON array of selected external_id strings. No explanation, no \
 markdown fences, just the raw JSON array. \
-Example: ["img1_person_0", "img2_chair_1"]\
+Example: ["img1", "img2"]\
 """
 
 
-async def select_assets(
+async def select_sources(
     prompt: str,
-    candidates: list[EntityItem],
+    candidates: list[SourceImage],
     anthropic_client: anthropic.AsyncAnthropic,
-    max_items: int = 20,
+    max_sources: int = 10,
 ) -> list[str]:
-    """Select the best entity crop candidates for the collage via a single LLM call.
+    """Select the best source image candidates for the collage via a single LLM call.
 
     Args:
         prompt: The user's creative prompt.
-        candidates: Detected entity crops as ``EntityItem`` objects.
+        candidates: Available source images as ``SourceImage`` objects.
         anthropic_client: Anthropic async client instance.
-        max_items: Maximum number of items to select.
+        max_sources: Maximum number of source images to select.
 
     Returns:
-        List of selected ``item_id`` strings.
+        List of selected ``external_id`` strings.
     """
     summaries = [
         {
-            "item_id": e.item_id,
-            "label": e.label,
-            "parent": e.parent_image_id,
-            "title": e.metadata.get("title", ""),
-            "year": e.metadata.get("year", ""),
-            "size": list(e.size),
+            "external_id": s.external_id,
+            "title": s.title,
+            "description": s.description[:200] if s.description else "",
+            "year": s.metadata.get("year", ""),
+            "creator": s.metadata.get("creator", ""),
         }
-        for e in candidates
+        for s in candidates
     ]
 
     user_message = (
         f"Creative prompt: {prompt}\n\n"
-        f"Select up to {max_items} entity crops from these candidates:\n\n"
+        f"Select up to {max_sources} source images from these candidates:\n\n"
         + json.dumps(summaries, indent=2)
     )
 

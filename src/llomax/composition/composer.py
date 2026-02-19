@@ -4,59 +4,62 @@ import random
 
 from PIL import Image
 
-from llomax.models import CollageOutput, EntityItem
+from llomax.models import CollageOutput, Fragment
 
 
 def compose(
-    elements: list[EntityItem],
+    fragments: list[Fragment],
     canvas_size: tuple[int, int] = (1024, 1024),
     background: Image.Image | None = None,
 ) -> CollageOutput:
-    """Place each entity crop at a random position on a canvas.
+    """Place each fragment at a random position on a canvas using alpha compositing.
 
     The canvas is initialised from ``background`` if provided, otherwise
-    a solid white canvas is used. Elements larger than the canvas are
-    pinned to ``(0, 0)``.
+    a solid white canvas is used. Fragments larger than the canvas are
+    pinned to ``(0, 0)``. Each fragment's alpha channel is used as a mask
+    so transparent regions of RGBA images blend correctly with the canvas.
 
     Args:
-        elements: Entity crops to place on the canvas.
+        fragments: Visual segments to place on the canvas.
         canvas_size: ``(width, height)`` in pixels.
         background: Optional background image. Resized to ``canvas_size``
             if its dimensions differ.
 
     Returns:
-        A ``CollageOutput`` with the composed image, dimensions, and
-        entity provenance records for every placed crop.
+        A ``CollageOutput`` with the composed RGB image, dimensions, and
+        provenance records for every placed fragment.
     """
     width, height = canvas_size
 
     if background is not None:
-        canvas = background.resize((width, height)).convert("RGB")
+        canvas = background.resize((width, height)).convert("RGBA")
     else:
-        canvas = Image.new("RGB", (width, height), "white")
+        canvas = Image.new("RGBA", (width, height), (255, 255, 255, 255))
 
     provenance: list[dict] = []
 
-    for element in elements:
-        img = element.load_image()
-        if img is None:
-            continue
-
+    for fragment in fragments:
+        img = fragment.image_rgba
         max_x = max(0, width - img.width)
         max_y = max(0, height - img.height)
         x = random.randint(0, max_x)
         y = random.randint(0, max_y)
-        canvas.paste(img, (x, y))
+
+        canvas.paste(img, (x, y), mask=img.split()[3])
 
         provenance.append(
             {
-                "item_id": element.item_id,
-                "parent_image_id": element.parent_image_id,
-                "label": element.label,
-                "size": list(element.size),
+                "source_id": fragment.source_id,
+                "bounding_box": list(fragment.bounding_box),
+                "label": fragment.label,
+                "description": fragment.description,
                 "position": [x, y],
-                "metadata": element.metadata,
             }
         )
 
-    return CollageOutput(image=canvas, width=width, height=height, entity_provenance=provenance)
+    return CollageOutput(
+        image=canvas.convert("RGB"),
+        width=width,
+        height=height,
+        fragment_provenance=provenance,
+    )

@@ -19,10 +19,13 @@ def _parse_canvas(value: str) -> tuple[int, int]:
 async def _run(prompt: str, canvas_size: tuple[int, int], max_items: int) -> None:
     """Run the pipeline with the given prompt and canvas size.
 
+    Uses ``PlaceholderAnalysisClient`` by default (no SAM checkpoint required).
+    To use SAM segmentation, replace it with ``Segmenter(checkpoint_path=...)``.
+
     Args:
         prompt: Creative text prompt describing the desired collage.
         canvas_size: ``(width, height)`` in pixels.
-        max_items: Target number of images for the final collage.
+        max_items: Target number of source images for curation.
     """
     agent = InternetArchiveAgent()
     client = PlaceholderAnalysisClient()
@@ -46,7 +49,7 @@ def cli() -> None:
         "--max-items",
         type=int,
         default=20,
-        help="Target number of images for the final collage (default: 20)",
+        help="Target number of source images to curate (default: 20)",
     )
     args = parser.parse_args()
     asyncio.run(_run(args.prompt, args.canvas, args.max_items))

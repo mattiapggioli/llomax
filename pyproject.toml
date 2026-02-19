@@ -8,11 +8,14 @@ dependencies = [
     "anthropic",
     "httpx",
     "internetarchive>=5.7.2",
+    "numpy",
+    "onnx",
+    "opencv-python",
+    "openvino",
     "python-dotenv",
+    "segment-anything",
     "torch>=2.0",
     "torchvision",
-    "ultralytics",
-    "openvino",
 ]
 
 [project.scripts]

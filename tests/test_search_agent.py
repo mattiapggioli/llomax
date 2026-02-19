@@ -2,18 +2,16 @@ from __future__ import annotations
 
 import json
 from io import BytesIO
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
-from llomax.search.internet_archive_agent import (
-    MAX_AGENT_TURNS,
-    InternetArchiveAgent,
-)
 from PIL import Image
 
-from llomax.models import EntityItem, SearchResult
-from llomax.search.clients.internet_archive_client import InternetArchiveClient, ImageResult
-from llomax.search.curator import select_assets
+from llomax.models import SourceImage
+from llomax.search.clients.internet_archive_client import ImageResult, InternetArchiveClient
+from llomax.search.curator import select_sources
+from llomax.search.internet_archive_agent import MAX_AGENT_TURNS, InternetArchiveAgent
 from llomax.search.thumbnails import download_thumbnails
 
 # ---------------------------------------------------------------------------
@@ -110,7 +108,6 @@ class TestInternetArchiveClient:
 
 class TestDispatchTool:
     def _make_agent(self, ia_client: InternetArchiveClient) -> InternetArchiveAgent:
-        """Create an agent with a mock IA client for dispatch testing."""
         return InternetArchiveAgent(anthropic_client=AsyncMock(), ia_client=ia_client)
 
     def test_dispatch_search_images(self):
@@ -277,13 +274,13 @@ class TestInternetArchiveAgent:
 # ---------------------------------------------------------------------------
 
 
-def _make_entity(item_id: str, parent_id: str, label: str = "person") -> EntityItem:
-    return EntityItem(
-        item_id=item_id,
-        parent_image_id=parent_id,
-        size=(100, 100),
-        label=label,
-        metadata={"title": parent_id.upper(), "year": "1900", "archive_url": "", "creator": ""},
+def _make_source(external_id: str, title: str = "") -> SourceImage:
+    return SourceImage(
+        external_id=external_id,
+        title=title or external_id.upper(),
+        description="",
+        local_path=None,
+        metadata={"year": "1900", "creator": "", "thumbnail_url": "", "details_url": ""},
     )
 
 
@@ -292,32 +289,28 @@ class TestCurator:
         mock_response = MagicMock()
         text_block = MagicMock()
         text_block.type = "text"
-        text_block.text = '["id1_person_0", "id3_person_0"]'
+        text_block.text = '["id1", "id3"]'
         mock_response.content = [text_block]
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-        candidates = [
-            _make_entity("id1_person_0", "id1"),
-            _make_entity("id2_person_0", "id2"),
-            _make_entity("id3_person_0", "id3"),
-        ]
-        selected = await select_assets("prompt", candidates, mock_client)
-        assert selected == ["id1_person_0", "id3_person_0"]
+        candidates = [_make_source("id1"), _make_source("id2"), _make_source("id3")]
+        selected = await select_sources("prompt", candidates, mock_client)
+        assert selected == ["id1", "id3"]
 
     async def test_handles_markdown_fenced_json(self):
         mock_response = MagicMock()
         text_block = MagicMock()
         text_block.type = "text"
-        text_block.text = '```json\n["id1_person_0"]\n```'
+        text_block.text = '```json\n["id1"]\n```'
         mock_response.content = [text_block]
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-        selected = await select_assets("prompt", [], mock_client)
-        assert selected == ["id1_person_0"]
+        selected = await select_sources("prompt", [], mock_client)
+        assert selected == ["id1"]
 
     async def test_handles_non_list_response(self):
         mock_response = MagicMock()
@@ -329,25 +322,22 @@ class TestCurator:
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-        selected = await select_assets("prompt", [], mock_client)
+        selected = await select_sources("prompt", [], mock_client)
         assert selected == []
 
-    async def test_respects_max_items(self):
+    async def test_respects_max_sources(self):
         mock_response = MagicMock()
         text_block = MagicMock()
         text_block.type = "text"
-        text_block.text = '["id1_person_0", "id2_person_0"]'
+        text_block.text = '["id1", "id2"]'
         mock_response.content = [text_block]
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-        candidates = [
-            _make_entity("id1_person_0", "id1"),
-            _make_entity("id2_person_0", "id2"),
-        ]
-        selected = await select_assets("prompt", candidates, mock_client, max_items=5)
-        assert selected == ["id1_person_0", "id2_person_0"]
+        candidates = [_make_source("id1"), _make_source("id2")]
+        selected = await select_sources("prompt", candidates, mock_client, max_sources=5)
+        assert selected == ["id1", "id2"]
         user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
         assert "up to 5" in user_msg
 
@@ -355,14 +345,14 @@ class TestCurator:
         mock_response = MagicMock()
         text_block = MagicMock()
         text_block.type = "text"
-        text_block.text = '["id1_person_0", 42, "id2_person_0", null]'
+        text_block.text = '["id1", 42, "id2", null]'
         mock_response.content = [text_block]
 
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-        selected = await select_assets("prompt", [], mock_client)
-        assert selected == ["id1_person_0", "id2_person_0"]
+        selected = await select_sources("prompt", [], mock_client)
+        assert selected == ["id1", "id2"]
 
     async def test_candidate_summaries_sent_to_llm(self):
         mock_response = MagicMock()
@@ -374,21 +364,21 @@ class TestCurator:
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-        candidates = [_make_entity("img_person_0", "img")]
-        await select_assets("prompt", candidates, mock_client)
+        candidates = [_make_source("img1", title="A Fine Painting")]
+        await select_sources("prompt", candidates, mock_client)
 
         user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
-        assert "img_person_0" in user_msg
-        assert "person" in user_msg
+        assert "img1" in user_msg
+        assert "A Fine Painting" in user_msg
 
 
 # ---------------------------------------------------------------------------
-# Download thumbnails tests (unchanged)
+# Download thumbnails tests
 # ---------------------------------------------------------------------------
 
 
 class TestDownloadThumbnails:
-    async def test_downloads_images(self):
+    async def test_downloads_images(self, tmp_path: Path):
         img = Image.new("RGB", (10, 10), "blue")
         buf = BytesIO()
         img.save(buf, format="PNG")
@@ -399,12 +389,13 @@ class TestDownloadThumbnails:
         mock_response.content = png_bytes
         mock_response.raise_for_status = MagicMock()
 
-        results = [
-            SearchResult(
-                identifier="img1",
+        sources = [
+            SourceImage(
+                external_id="img1",
                 title="Test",
-                thumbnail_url="https://archive.org/services/img/img1",
-                details_url="",
+                description="",
+                local_path=None,
+                metadata={"thumbnail_url": "https://archive.org/services/img/img1"},
             )
         ]
 
@@ -415,17 +406,19 @@ class TestDownloadThumbnails:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            await download_thumbnails(results)
+            await download_thumbnails(sources, cache_dir=tmp_path)
 
-        assert results[0].image is not None
+        assert sources[0].local_path is not None
+        assert sources[0].local_path.exists()
 
-    async def test_failed_download_leaves_image_none(self):
-        results = [
-            SearchResult(
-                identifier="bad",
+    async def test_failed_download_leaves_local_path_none(self, tmp_path: Path):
+        sources = [
+            SourceImage(
+                external_id="bad",
                 title="Bad",
-                thumbnail_url="https://archive.org/services/img/bad",
-                details_url="",
+                description="",
+                local_path=None,
+                metadata={"thumbnail_url": "https://archive.org/services/img/bad"},
             )
         ]
 
@@ -436,13 +429,45 @@ class TestDownloadThumbnails:
             mock_client.__aexit__ = AsyncMock(return_value=False)
             mock_client_cls.return_value = mock_client
 
-            await download_thumbnails(results)
+            await download_thumbnails(sources, cache_dir=tmp_path)
 
-        assert results[0].image is None
+        assert sources[0].local_path is None
 
-    async def test_skips_results_without_url(self):
-        results = [
-            SearchResult(identifier="no_url", title="No URL", thumbnail_url="", details_url="")
+    async def test_skips_sources_without_thumbnail_url(self, tmp_path: Path):
+        sources = [
+            SourceImage(
+                external_id="no_url",
+                title="No URL",
+                description="",
+                local_path=None,
+                metadata={},
+            )
         ]
-        await download_thumbnails(results)
-        assert results[0].image is None
+        await download_thumbnails(sources, cache_dir=tmp_path)
+        assert sources[0].local_path is None
+
+    async def test_reuses_cached_file(self, tmp_path: Path):
+        # Pre-create the cached file
+        cached = tmp_path / "img1.jpg"
+        Image.new("RGB", (10, 10), "red").save(cached)
+
+        sources = [
+            SourceImage(
+                external_id="img1",
+                title="Cached",
+                description="",
+                local_path=None,
+                metadata={"thumbnail_url": "https://archive.org/services/img/img1"},
+            )
+        ]
+
+        with patch("llomax.search.thumbnails.httpx.AsyncClient") as mock_client_cls:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value = mock_client
+
+            await download_thumbnails(sources, cache_dir=tmp_path)
+
+            # File already cached — no HTTP request should be made
+            mock_client.get.assert_not_called()
+
+        assert sources[0].local_path == cached
