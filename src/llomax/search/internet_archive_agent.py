@@ -30,7 +30,7 @@ You have two tools:
 broad keywords for a single theme.
 2. **search_images** — search for images by providing a list of synonyms or related \
 terms. The system joins your list with OR automatically, so each term independently \
-retrieves results.
+retrieves results. The tool returns {{"results": [...], "count": N}}.
 
 ## Curated collections (consult before searching)
 These high-quality collections are always available. Use collection=<identifier> \
@@ -54,8 +54,15 @@ curator to filter.
 in original archive metadata.
 5. DIVERSIFIED EXPLORATION: Perform at least 3–5 searches using different keywords, \
 synonyms, time periods (date_filter), or specific collections.
-6. SEARCH SCALE: Set max_results to the target count per search_images call.
-7. FINAL RESPONSE: Once you have explored several distinct thematic angles, \
+6. SEARCH SCALE: Set max_results to 25–40 per call. The curator needs a large pool \
+to choose from — aim for at least 5× the target fragment count across all searches.
+7. ZERO-RESULT FALLBACK: When search_images returns count=0, the term is too specific \
+or unavailable in public-domain archives. Pivot immediately — describe what the \
+subject LOOKS LIKE (shape, colour, category) rather than its name.
+   Example: "Mickey Mouse" → ["cartoon", "mouse", "animated", "character", "illustration"]
+   Example: "Coca-Cola" → ["bottle", "drink", "label", "beverage", "advertisement"]
+   Example: "Batman" → ["superhero", "cape", "costume", "comic", "hero"]
+8. FINAL RESPONSE: Once you have explored several distinct thematic angles, \
 provide a summary of the collections and search terms used.\
 """
 
@@ -96,11 +103,18 @@ a large candidate pool for the curator to filter.
 5. AVOID AESTHETIC TERMS: Do not include words like "vintage", "retro", "beautiful", \
 or "cool" in keywords for curated collections — they rarely appear in original archive \
 metadata.
-6. CALCULATE YOUR TARGET: Plan for a total candidate pool of 4× max_items. \
-Distribute max_results across searches to reach this total.
-7. DIVERSIFY: Cover distinct thematic angles, time periods, collections, and \
+6. CALCULATE YOUR TARGET: Plan for a total candidate pool of 5× max_items. \
+Distribute max_results across searches to reach this total. \
+E.g. for max_items=20 → 100 candidates → 5 searches × max_results=20 each.
+7. PRE-EMPTIVE ALTERNATIVES: For any subject that is copyrighted, trademarked, or \
+niche (fictional characters, brand names, specific celebrities), plan an alternative \
+search using visual descriptors instead of the proper name.
+   Example: "Mickey Mouse" → keywords=["cartoon", "mouse", "animated", "illustration"]
+   Example: "Superman" → keywords=["superhero", "cape", "costume", "flying", "comic"]
+   Example: "iPhone" → keywords=["telephone", "device", "screen", "technology"]
+8. DIVERSIFY: Cover distinct thematic angles, time periods, collections, and \
 keyword variations. Do not repeat the same angle twice.
-8. COMPLETE: Once the planned pool reaches approximately 4× max_items, stop \
+9. COMPLETE: Once the planned pool reaches approximately 5× max_items, stop \
 planning and respond with a brief summary of the strategy.\
 """
 
@@ -242,7 +256,7 @@ class InternetArchiveAgent:
             ``max_results``.
         """
         plan: list[dict] = []
-        target_pool = max_items * 4
+        target_pool = max_items * 5
         user_content = (
             f"max_items={max_items} (target candidate pool: ~{target_pool} total results across all searches).\n\n"
             f"{prompt}"
@@ -268,6 +282,33 @@ class InternetArchiveAgent:
             messages.append({"role": "user", "content": tool_results})
 
         return plan
+
+    def _format_search_result(self, results: list[ImageResult]) -> str:
+        """Wrap search_images results in a dict envelope.
+
+        Returns ``{"results": [...], "count": N}``. When the list is empty a
+        ``"suggestion"`` key is added to guide the agent toward a semantic
+        fallback instead of retrying similar terms.
+
+        Args:
+            results: Image results returned by the IA client.
+
+        Returns:
+            JSON string with a ``results`` list, a ``count`` integer, and
+            an optional ``suggestion`` string when no results were found.
+        """
+        payload: dict = {"results": results, "count": len(results)}
+        if not results:
+            payload["suggestion"] = (
+                "Zero results. The search term may be too specific, niche, or refer to a "
+                "copyrighted subject unavailable in public-domain archives. "
+                "Pivot immediately: describe what the subject LOOKS LIKE (shape, colour, "
+                "category) rather than its name. "
+                "Example: 'Mickey Mouse' → ['cartoon', 'mouse', 'animated', 'character', 'illustration']. "
+                "Example: 'Coca-Cola' → ['bottle', 'drink', 'label', 'beverage', 'advertisement']. "
+                "Try a different curated collection or broaden the keyword list."
+            )
+        return json.dumps(payload)
 
     def _log_tool_call(self, tool_name: str, tool_input: dict, result_text: str) -> None:
         """Log the input and outcome of a single tool call at DEBUG level.
@@ -301,9 +342,11 @@ class InternetArchiveAgent:
                 tool_input.get("max_results"),
             )
             try:
-                results = json.loads(result_text)
-                if isinstance(results, list):
-                    logger.debug("  {} result(s) returned", len(results))
+                data = json.loads(result_text)
+                count = data["count"] if isinstance(data, dict) else len(data)
+                logger.debug("  {} result(s) returned", count)
+                if isinstance(data, dict) and data.get("suggestion"):
+                    logger.debug("  [fallback hint] {}", data["suggestion"])
             except Exception:
                 pass
 
@@ -346,7 +389,7 @@ class InternetArchiveAgent:
                 if tool_input.get("max_results") is not None:
                     kwargs["max_results"] = tool_input["max_results"]
                 results = self.ia_client.search_images(**kwargs)
-                return json.dumps(results)
+                return self._format_search_result(results)
             case _:
                 return json.dumps({"error": f"Unknown tool: {tool_name}"})
 
@@ -355,11 +398,16 @@ class InternetArchiveAgent:
     ) -> None:
         """Parse search_images JSON and merge new results into the accumulator.
 
+        Accepts both the wrapped envelope ``{"results": [...], "count": N}``
+        produced by ``_format_search_result`` and a plain list (legacy/test format).
+
         Args:
             result_text: JSON string returned by a search_images tool call.
             results_by_id: Accumulator dict keyed by identifier. Modified in place.
         """
-        for item in json.loads(result_text):
+        data = json.loads(result_text)
+        items = data["results"] if isinstance(data, dict) else data
+        for item in items:
             ident = item.get("identifier", "")
             if not ident:
                 continue

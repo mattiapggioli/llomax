@@ -148,8 +148,19 @@ class TestDispatchTool:
         agent = self._make_agent(mock_client)
         result = agent._dispatch_tool("search_images", {"keywords": ["test"]})
         parsed = json.loads(result)
-        assert len(parsed) == 1
-        assert parsed[0]["identifier"] == "x"
+        assert parsed["count"] == 1
+        assert parsed["results"][0]["identifier"] == "x"
+
+    def test_dispatch_search_images_zero_results_includes_suggestion(self):
+        mock_client = MagicMock(spec=InternetArchiveClient)
+        mock_client.search_images.return_value = []
+        agent = self._make_agent(mock_client)
+        result = agent._dispatch_tool("search_images", {"keywords": ["mickey mouse"]})
+        parsed = json.loads(result)
+        assert parsed["count"] == 0
+        assert parsed["results"] == []
+        assert "suggestion" in parsed
+        assert len(parsed["suggestion"]) > 0
 
     def test_dispatch_find_collections(self):
         mock_client = MagicMock(spec=InternetArchiveClient)
