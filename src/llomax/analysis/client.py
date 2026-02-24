@@ -195,7 +195,7 @@ class YoloAnalysisClient:
         mask_np = mask_tensor.cpu().numpy()
         if mask_np.shape != (orig_h, orig_w):
             mask_pil = Image.fromarray((mask_np * 255).astype(np.uint8), mode="L")
-            mask_pil = mask_pil.resize((orig_w, orig_h), Image.BILINEAR)
+            mask_pil = mask_pil.resize((orig_w, orig_h), Image.Resampling.BILINEAR)
             binary_mask = np.array(mask_pil) > 127
         else:
             binary_mask = mask_np > 0.5
