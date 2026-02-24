@@ -204,7 +204,7 @@ class YoloAnalysisClient:
         else:
             binary_mask = mask_np > 0.5
 
-        x1, y1, x2, y2 = xyxy.cpu().numpy().astype(int)
+        x1, y1, x2, y2 = (int(v) for v in xyxy.cpu().numpy())
         x1, y1 = max(0, x1), max(0, y1)
         x2, y2 = min(orig_w, x2), min(orig_h, y2)
 
