@@ -35,8 +35,8 @@ def save_run(
     Returns:
         Path to the created run directory.
     """
+    timestamp = datetime.now()
     if run_dir is None:
-        timestamp = datetime.now()
         dir_name = timestamp.strftime("%Y-%m-%d_%H-%M-%S")
         run_dir = Path(output_dir) / dir_name
     run_dir.mkdir(parents=True, exist_ok=True)
