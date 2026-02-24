@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 
-from llomax.analysis.client import PlaceholderAnalysisClient, YoloAnalysisClient
+from llomax.analysis.client import YoloAnalysisClient
 from llomax.pipeline import Pipeline
 from llomax.search.internet_archive_agent import InternetArchiveAgent
 
@@ -16,30 +16,16 @@ def _parse_canvas(value: str) -> tuple[int, int]:
     return int(parts[0]), int(parts[1])
 
 
-async def _run(
-    prompt: str,
-    canvas_size: tuple[int, int],
-    max_items: int,
-    segmenter: str,
-    yolo_model: str,
-) -> None:
+async def _run(prompt: str, canvas_size: tuple[int, int], max_items: int) -> None:
     """Run the pipeline with the given prompt and canvas size.
 
     Args:
         prompt: Creative text prompt describing the desired collage.
         canvas_size: ``(width, height)`` in pixels.
         max_items: Target number of source images to curate.
-        segmenter: Analysis backend — ``"yolo"`` or ``"placeholder"``.
-        yolo_model: Ultralytics model name used when segmenter is ``"yolo"``.
     """
     agent = InternetArchiveAgent()
-
-    if segmenter == "placeholder":
-        analysis_client = PlaceholderAnalysisClient()
-    else:
-        analysis_client = YoloAnalysisClient(model_name=yolo_model)
-
-    pipeline = Pipeline(search_agent=agent, analysis_client=analysis_client)
+    pipeline = Pipeline(search_agent=agent, analysis_client=YoloAnalysisClient())
     await pipeline.run(prompt, canvas_size=canvas_size, max_items=max_items)
 
 
@@ -61,19 +47,8 @@ def cli() -> None:
         default=20,
         help="Target number of source images to curate (default: 20)",
     )
-    parser.add_argument(
-        "--segmenter",
-        choices=["yolo", "placeholder"],
-        default="yolo",
-        help="Segmentation backend (default: yolo). Use 'placeholder' for fast testing.",
-    )
-    parser.add_argument(
-        "--yolo-model",
-        default="yolov8n-seg.pt",
-        help="Ultralytics segmentation model name or path (default: yolov8n-seg.pt)",
-    )
     args = parser.parse_args()
-    asyncio.run(_run(args.prompt, args.canvas, args.max_items, args.segmenter, args.yolo_model))
+    asyncio.run(_run(args.prompt, args.canvas, args.max_items))
 
 
 if __name__ == "__main__":
