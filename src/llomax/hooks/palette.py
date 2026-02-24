@@ -35,9 +35,7 @@ def color_grade(
 
     async def hook(state: PipelineState) -> None:
         if state.background_image is not None:
-            state.background_image = _apply_palette(
-                state.background_image.convert("RGB"), mode
-            )
+            state.background_image = _apply_palette(state.background_image.convert("RGB"), mode)
             logger.debug("[color_grade] Applied {!r} to background image.", mode)
 
         for frag in state.fragments:

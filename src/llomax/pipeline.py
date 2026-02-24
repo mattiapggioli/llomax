@@ -131,22 +131,33 @@ class Pipeline:
         search_plan = await self.search_agent.plan_search(prompt, max_items=max_items)
         logger.info("Stage 1 complete — {} search intent(s) registered.", len(search_plan))
         for i, item in enumerate(search_plan, 1):
-            logger.debug("  Plan {}: keywords={!r}, collection={}, date_filter={}", i,
-                         item.get("keywords"), item.get("collection"), item.get("date_filter"))
+            logger.debug(
+                "  Plan {}: keywords={!r}, collection={}, date_filter={}",
+                i,
+                item.get("keywords"),
+                item.get("collection"),
+                item.get("date_filter"),
+            )
 
         # Stage 2: Execute plan directly in Python.
         logger.info("Stage 2 — Executing search plan ({} queries)...", len(search_plan))
         raw_results = self._execute_search_plan(search_plan)
         source_candidates = self._build_source_images(raw_results)
-        logger.info("Stage 2 complete — {} unique candidate source(s) discovered.",
-                    len(source_candidates))
+        logger.info(
+            "Stage 2 complete — {} unique candidate source(s) discovered.", len(source_candidates)
+        )
 
         # Stage 3: Download thumbnails for all candidates.
-        logger.info("Stage 3 — Downloading thumbnails for {} candidate(s) to {}...",
-                    len(source_candidates), self.thumbnails_dir)
+        logger.info(
+            "Stage 3 — Downloading thumbnails for {} candidate(s) to {}...",
+            len(source_candidates),
+            self.thumbnails_dir,
+        )
         await download_thumbnails(source_candidates, self.thumbnails_dir)
         cached = sum(1 for s in source_candidates if s.local_path is not None)
-        logger.info("Stage 3 complete — {}/{} thumbnail(s) available.", cached, len(source_candidates))
+        logger.info(
+            "Stage 3 complete — {}/{} thumbnail(s) available.", cached, len(source_candidates)
+        )
 
         # Stage 4: Segment all candidates to discover their visual content.
         logger.info("Stage 4 — Segmenting {} candidate(s)...", len(source_candidates))
@@ -157,7 +168,9 @@ class Pipeline:
         sources_with_fragments = sum(1 for v in fragments_by_source.values() if v)
         logger.info(
             "Stage 4 complete — {} fragment(s) extracted from {}/{} candidate(s).",
-            len(all_fragments), sources_with_fragments, len(source_candidates),
+            len(all_fragments),
+            sources_with_fragments,
+            len(source_candidates),
         )
         label_counts = Counter(f.label for f in all_fragments)
         for label, count in label_counts.most_common():
@@ -166,10 +179,14 @@ class Pipeline:
         # Stage 5: Curator picks individual fragments from the full pool.
         logger.info(
             "Stage 5 — Curating: selecting ~{} fragment(s) from {} available...",
-            max_items, len(all_fragments),
+            max_items,
+            len(all_fragments),
         )
         selected_fragment_ids = await select_fragments(
-            prompt, source_candidates, all_fragments, self.anthropic_client,
+            prompt,
+            source_candidates,
+            all_fragments,
+            self.anthropic_client,
             max_fragments=max_items,
         )
         selected_id_set = set(selected_fragment_ids)
@@ -178,7 +195,8 @@ class Pipeline:
         selected_sources = [s for s in source_candidates if s.external_id in selected_source_ids]
         logger.info(
             "Stage 5 complete — {} fragment(s) selected from {} source(s).",
-            len(fragments), len(selected_sources),
+            len(fragments),
+            len(selected_sources),
         )
         source_frag_counts = Counter(f.source_id for f in fragments)
         for src in selected_sources:
@@ -219,7 +237,9 @@ class Pipeline:
         # Stage 7: Compose collage — use composition_strategy override if registered.
         logger.info(
             "Stage 7 — Composing collage: {} fragment(s) onto {}×{} canvas...",
-            len(state.fragments), canvas_size[0], canvas_size[1],
+            len(state.fragments),
+            canvas_size[0],
+            canvas_size[1],
         )
         composition_override = self.hooks.get_override("composition_strategy")
         if composition_override is not None:

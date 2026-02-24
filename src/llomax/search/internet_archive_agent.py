@@ -17,8 +17,7 @@ MAX_AGENT_TURNS = 10
 _DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 _CURATED_COLLECTIONS_BLOCK = "\n".join(
-    f"  - {c['identifier']}: {c['title']} — {c['description']}"
-    for c in CURATED_COLLECTIONS
+    f"  - {c['identifier']}: {c['title']} — {c['description']}" for c in CURATED_COLLECTIONS
 )
 
 _SYSTEM_PROMPT = f"""\
@@ -151,7 +150,7 @@ _TOOLS: list[ToolParam] = [
                     "items": {"type": "string"},
                     "description": (
                         "List of synonyms and related terms. "
-                        "E.g. [\"botanical\", \"flora\", \"illustration\", \"plant\"]. "
+                        'E.g. ["botanical", "flora", "illustration", "plant"]. '
                         "The system joins them with OR."
                     ),
                 },
@@ -315,9 +314,7 @@ class InternetArchiveAgent:
             result_text: JSON string returned by the tool.
         """
         if tool_name == "find_collections":
-            logger.debug(
-                "[find_collections] keywords={!r}", tool_input.get("keywords", [])
-            )
+            logger.debug("[find_collections] keywords={!r}", tool_input.get("keywords", []))
             collections = json.loads(result_text)
             if collections:
                 for col in collections:

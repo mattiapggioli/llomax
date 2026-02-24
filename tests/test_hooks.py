@@ -224,9 +224,7 @@ class TestColorGrade:
 
 
 class TestLlmCompose:
-    def _placement_json(
-        self, frag: Fragment, x: int = 10, y: int = 20, scale: float = 1.0
-    ) -> str:
+    def _placement_json(self, frag: Fragment, x: int = 10, y: int = 20, scale: float = 1.0) -> str:
         return json.dumps(
             {frag.fragment_id: {"x": x, "y": y, "scale": scale, "reason": "artistic choice"}}
         )
@@ -258,9 +256,7 @@ class TestLlmCompose:
     async def test_applies_scale(self):
         frag = _make_fragment("src1", w=40, h=40)
         state = _make_state(sources=[_make_source("src1")], fragments=[frag])
-        payload = json.dumps(
-            {frag.fragment_id: {"x": 0, "y": 0, "scale": 0.5, "reason": "small"}}
-        )
+        payload = json.dumps({frag.fragment_id: {"x": 0, "y": 0, "scale": 0.5, "reason": "small"}})
         hook = llm_compose(_mock_anthropic(payload))
         result = await hook(state)
         assert result.fragment_provenance[0]["scale"] == 0.5

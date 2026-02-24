@@ -128,11 +128,7 @@ class InternetArchiveClient:
         items = itertools.islice(
             internetarchive.search_items(query, fields=IMAGE_FIELDS), max_results
         )
-        return [
-            self._image_result_from_item(item)
-            for item in items
-            if item.get("identifier", "")
-        ]
+        return [self._image_result_from_item(item) for item in items if item.get("identifier", "")]
 
     def find_collections(
         self,
@@ -160,9 +156,7 @@ class InternetArchiveClient:
             internetarchive.search_items(query, fields=COLLECTION_FIELDS), max_results
         )
         return [
-            self._collection_result_from_item(item)
-            for item in items
-            if item.get("identifier", "")
+            self._collection_result_from_item(item) for item in items if item.get("identifier", "")
         ]
 
     def get_curated_collections(self) -> list[CuratedCollection]:

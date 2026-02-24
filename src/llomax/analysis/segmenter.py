@@ -131,9 +131,7 @@ class Segmenter:
         try:
             return self._build_openvino_generator()
         except Exception as exc:
-            logger.warning(
-                "OpenVINO backend unavailable (%s); falling back to PyTorch CPU.", exc
-            )
+            logger.warning("OpenVINO backend unavailable (%s); falling back to PyTorch CPU.", exc)
             return self._build_pytorch_generator()
 
     def _build_pytorch_generator(self):

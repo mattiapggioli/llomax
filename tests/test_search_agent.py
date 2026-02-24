@@ -415,7 +415,9 @@ class TestCurator:
         frag = _make_fragment("src1")
         mock_client = _mock_curator_response("[]")
 
-        await select_fragments("prompt", [_make_source("src1", title="Galaxy Photo")], [frag], mock_client)
+        await select_fragments(
+            "prompt", [_make_source("src1", title="Galaxy Photo")], [frag], mock_client
+        )
 
         user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
         assert "Galaxy Photo" in user_msg

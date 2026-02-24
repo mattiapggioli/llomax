@@ -59,8 +59,7 @@ async def select_fragments(
     user_message = (
         f"Creative prompt: {prompt}\n\n"
         f"Target fragment count: ~{max_fragments}\n\n"
-        f"Available fragments:\n\n"
-        + json.dumps(summaries, indent=2)
+        f"Available fragments:\n\n" + json.dumps(summaries, indent=2)
     )
 
     logger.debug("[curator report]\n{}", user_message)

@@ -12,7 +12,9 @@ from llomax.analysis.client import YoloAnalysisClient
 from llomax.models import SourceImage
 
 
-def _make_source(tmp_path: Path, name: str = "img", size: tuple[int, int] = (100, 100)) -> SourceImage:
+def _make_source(
+    tmp_path: Path, name: str = "img", size: tuple[int, int] = (100, 100)
+) -> SourceImage:
     img = Image.new("RGB", size, color=(128, 64, 32))
     path = tmp_path / f"{name}.jpg"
     img.save(path)
@@ -53,9 +55,7 @@ def _make_yolo_result(
     result.masks.data = torch.stack(mask_data)
 
     # boxes.xyxy: (N, 4) in original image pixels
-    xyxy_data = torch.tensor(
-        [[10.0, 10.0, 50.0, 50.0]] * num_detections
-    )
+    xyxy_data = torch.tensor([[10.0, 10.0, 50.0, 50.0]] * num_detections)
     result.boxes = MagicMock()
     result.boxes.xyxy = xyxy_data
 

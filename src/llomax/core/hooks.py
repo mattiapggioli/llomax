@@ -46,9 +46,7 @@ class HookManager:
         self._hooks: dict[str, list[Callable[[PipelineState], Awaitable[None]]]] = {}
         self._overrides: dict[str, Callable] = {}
 
-    def register(
-        self, hook_point: str, fn: Callable[[PipelineState], Awaitable[None]]
-    ) -> None:
+    def register(self, hook_point: str, fn: Callable[[PipelineState], Awaitable[None]]) -> None:
         """Register an additive hook for ``hook_point``.
 
         Args:

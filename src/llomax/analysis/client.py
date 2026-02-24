@@ -50,11 +50,7 @@ class PlaceholderAnalysisClient:
         Returns:
             One ``Fragment`` per source image that loads successfully.
         """
-        return [
-            f
-            for source in sources
-            if (f := self._fragment_from_source(source)) is not None
-        ]
+        return [f for source in sources if (f := self._fragment_from_source(source)) is not None]
 
     def _fragment_from_source(self, source: SourceImage) -> Fragment | None:
         """Create a full-frame ``Fragment`` from a source image.
