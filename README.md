@@ -4,13 +4,64 @@ LLM agent-based pipeline for creating artistic collages from Internet Archive ma
 
 ## Overview
 
-llomax is a five-stage pipeline:
+llomax is an LLM-driven pipeline that turns a text prompt into an artistic collage sourced entirely from the Internet Archive.
 
-1. **Search** — An LLM agent (Claude) autonomously queries the Internet Archive, issuing multiple searches across varied keywords, collections, and time periods to build a diverse candidate pool.
-2. **Source selection** — A second LLM call curates the candidate pool, picking the source images whose metadata best fits the creative prompt.
-3. **Segmentation** — SAM (`segment-anything`) extracts every distinct visual element from each selected image. Each segment becomes a `Fragment` with a transparent RGBA background. Inference runs on the Intel Arc GPU via OpenVINO (`device_name="AUTO"`), with a PyTorch CPU fallback.
-4. **Annotation** — Placeholder methods simulate future Anthropic Vision calls: one for whole-image context, one for individual fragment descriptions.
-5. **Composition** — Fragments are alpha-composited at random positions onto a canvas. The result and a provenance JSON are saved to `OUTPUT_DIR/{timestamp}/`.
+```
+   prompt
+     │
+     ▼
+┌─────────────────────────────────────────┐
+│  1. PLAN SEARCH                         │
+│     InternetArchiveAgent  (LLM loop)    │
+│     registers search intents            │
+└──────────────────────┬──────────────────┘
+                       │ search plan
+                       ▼
+┌─────────────────────────────────────────┐
+│  2. EXECUTE PLAN                        │
+│     InternetArchiveClient               │
+│     OR-joined Lucene queries → ~5×pool  │
+└──────────────────────┬──────────────────┘
+                       │ SourceImage candidates
+                       ▼
+┌─────────────────────────────────────────┐
+│  3. DOWNLOAD THUMBNAILS                 │
+│     async HTTP → cache_dir/{id}.jpg     │
+└──────────────────────┬──────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────┐
+│  4. SEGMENT                             │
+│     SAM  (OpenVINO / CPU fallback)      │
+│     one RGBA Fragment per mask          │
+└──────────────────────┬──────────────────┘
+                       │ Fragment pool
+                       ▼
+┌─────────────────────────────────────────┐
+│  5. CURATE FRAGMENTS                    │
+│     LLM single call (Haiku)             │
+│     selects fragment_id subset          │
+└──────────────────────┬──────────────────┘
+                       │ selected Fragments
+                       ▼
+┌─────────────────────────────────────────┐
+│  6. ANNOTATE                            │
+│     PlaceholderAnnotator                │
+│     label + description per fragment    │
+└──────────────────────┬──────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────┐
+│  7. COMPOSE                             │
+│     PIL alpha-composite → RGB canvas    │
+└──────────────────────┬──────────────────┘
+                       │
+                       ▼
+┌─────────────────────────────────────────┐
+│  8. SAVE                                │
+│     collage.png  +  metadata.json       │
+└─────────────────────────────────────────┘
+```
 
 ## Requirements
 
@@ -147,6 +198,3 @@ src/llomax/
     └── composer.py    # RGBA alpha-composite composer
 ```
 
-## License
-
-[MIT](LICENSE)
