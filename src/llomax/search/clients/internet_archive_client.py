@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import itertools
+import urllib.parse
 from typing import Required, TypedDict
 
 import internetarchive
+from loguru import logger
 
 THUMBNAIL_URL_TEMPLATE = "https://archive.org/services/img/{identifier}"
 DETAILS_URL_TEMPLATE = "https://archive.org/details/{identifier}"
@@ -103,6 +105,10 @@ class InternetArchiveClient:
             description, thumbnail_url, and details_url.
         """
         query = self._build_query(keywords, "image", collection, date_filter)
+        logger.debug(
+            "[IA] search_images query: {}  url: https://archive.org/advancedsearch.php?q={}",
+            query, urllib.parse.quote(query),
+        )
         items = itertools.islice(
             internetarchive.search_items(query, fields=IMAGE_FIELDS), max_results
         )
@@ -128,6 +134,10 @@ class InternetArchiveClient:
             description, and details_url.
         """
         query = self._build_query(keywords, "collection")
+        logger.debug(
+            "[IA] find_collections query: {}  url: https://archive.org/advancedsearch.php?q={}",
+            query, urllib.parse.quote(query),
+        )
         items = itertools.islice(
             internetarchive.search_items(query, fields=COLLECTION_FIELDS), max_results
         )

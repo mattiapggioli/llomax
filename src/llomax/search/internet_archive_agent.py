@@ -6,13 +6,22 @@ import anthropic
 from anthropic.types import ToolParam
 from loguru import logger
 
-from llomax.search.clients.internet_archive_client import InternetArchiveClient, ImageResult
+from llomax.search.clients.internet_archive_client import (
+    CURATED_COLLECTIONS,
+    ImageResult,
+    InternetArchiveClient,
+)
 
 MAX_AGENT_TURNS = 10
 
 _DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
-_SYSTEM_PROMPT = """\
+_CURATED_COLLECTIONS_BLOCK = "\n".join(
+    f"  - {c['identifier']}: {c['title']} — {c['description']}"
+    for c in CURATED_COLLECTIONS
+)
+
+_SYSTEM_PROMPT = f"""\
 You are a creative search agent for the Internet Archive. Your goal is to build \
 a high-quality, diverse candidate pool for an art curator.
 
@@ -22,46 +31,60 @@ You have two tools:
 `keywords` field. You can optionally filter by collection, date range, and set \
 max_results.
 
-STRATEGY:
-1. DIVERSIFIED EXPLORATION: Do not settle for one search. Even if your first \
-query returns results, you MUST perform multiple additional searches (at least \
-3-5) using different keywords, synonyms, time periods (date_filter), or specific \
-collections (via find_collections).
-2. SEARCH SCALE: For every 'search_images' call, set 'max_results' to the target \
-count provided in the user's request. This ensures each specific angle you \
-explore contributes a meaningful set of candidates.
-3. QUALITY POOL: If the user wants 25 images, and you perform 4 diverse searches, \
-you will provide a pool of ~100 candidates. This allows the Curator to select \
-the absolute best items.
-4. FINAL RESPONSE: Once you have explored several distinct thematic or visual \
-angles, provide a summary of the collections and search terms used.\
+## Curated collections (consult before searching)
+These high-quality collections are always available. Use collection=<identifier> \
+in search_images whenever a theme maps to one of them:
+{_CURATED_COLLECTIONS_BLOCK}
+
+## Rules
+1. CORRECT SPELLING: Fix all misspellings from the user prompt before using any \
+keyword (e.g. "astronaunts" → "astronauts", "forrest" → "forest").
+2. ONE THEME PER find_collections CALL: Search one theme at a time. The IA \
+engine treats spaces as AND — combining unrelated topics in a single call returns \
+zero results. Within a theme, use OR:
+   CORRECT:   keywords="ghost OR spirit OR haunted"
+   INCORRECT: keywords="ghost sailor forest"
+3. DIVERSIFIED EXPLORATION: Perform at least 3–5 searches using different \
+keywords, synonyms, time periods (date_filter), or specific collections.
+4. SEARCH SCALE: Set max_results to the target count per search_images call.
+5. FINAL RESPONSE: Once you have explored several distinct thematic angles, \
+provide a summary of the collections and search terms used.\
 """
 
-_PLANNER_SYSTEM_PROMPT = """\
+_PLANNER_SYSTEM_PROMPT = f"""\
 You are a Strategic Research Planner for the Internet Archive. Your task is to \
 design an autonomous, multi-angle search strategy for an art curator building a \
 collage.
 
 You have two tools:
-1. **find_collections** — discover relevant IA collections by keyword. Results \
-are returned immediately for your use in planning.
-2. **search_images** — register a search intent. Your call parameters are \
-recorded into the search plan; the actual execution happens after planning. \
-Each call returns a confirmation, not actual results.
+1. **find_collections** — discover IA collections by keyword. Results are \
+returned immediately for your use in planning.
+2. **search_images** — register a search intent. Parameters are recorded into \
+the search plan; the actual execution happens after planning. Each call returns \
+a confirmation, not actual results.
 
-STRATEGY:
-1. CALCULATE YOUR TARGET: When the user requests max_items images, your goal \
-is a total candidate pool of 4× that amount. For example, if max_items=25, \
-plan for ~100 total results across all searches.
-2. DISCOVER: Use find_collections to identify relevant collections for the \
-theme before planning your searches.
-3. PLAN AUTONOMOUSLY: Decide how many searches to register and how to distribute \
-max_results across them based on the prompt's complexity. A simple prompt may \
-need 2–3 focused queries; a rich thematic prompt may need 5–8 diverse queries. \
-Distribute max_results to reach the 4× target total.
-4. DIVERSIFY: Cover distinct thematic angles, time periods, collections, and \
+## Curated collections (consult before searching)
+These high-quality collections are always available. Use collection=<identifier> \
+in search_images whenever a theme maps to one of them instead of running a \
+generic collection discovery:
+{_CURATED_COLLECTIONS_BLOCK}
+
+## Rules
+1. CORRECT SPELLING: Fix all misspellings from the user prompt before using any \
+keyword (e.g. "astronaunts" → "astronauts", "forrest" → "forest").
+2. ONE THEME PER find_collections CALL: Search one theme at a time. The IA \
+engine treats spaces as AND — combining unrelated topics returns zero results. \
+Within a theme, use OR:
+   CORRECT:   keywords="ghost OR spirit OR haunted"
+   INCORRECT: keywords="ghost sailor forest"
+3. MAP TO CURATED COLLECTIONS: Before calling find_collections for a theme, \
+check whether a curated collection above already covers it. If so, skip \
+discovery and use collection=<identifier> directly in search_images.
+4. CALCULATE YOUR TARGET: Plan for a total candidate pool of 4× max_items. \
+Distribute max_results across searches to reach this total.
+5. DIVERSIFY: Cover distinct thematic angles, time periods, collections, and \
 keyword variations. Do not repeat the same angle twice.
-5. COMPLETE: Once the planned pool reaches approximately 4× max_items, stop \
+6. COMPLETE: Once the planned pool reaches approximately 4× max_items, stop \
 planning and respond with a brief summary of the strategy.\
 """
 
