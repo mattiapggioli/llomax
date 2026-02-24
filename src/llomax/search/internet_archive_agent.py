@@ -49,19 +49,18 @@ terms. The system applies OR logic — more terms means a larger candidate pool 
 curator to filter.
    CORRECT:   keywords=["astronaut", "cosmonaut", "spaceman", "spacewalk"]
    INCORRECT: keywords=["astronaut"]
-4. AVOID AESTHETIC TERMS: Do not include subjective words like "vintage", "retro", \
-"beautiful", or "cool" when searching curated collections — these terms rarely appear \
-in original archive metadata.
+4. INTELLIGENT RESEARCH: You are not limited to the literal words in the user's prompt. \
+Think semantically — translate the user's intent into the most searchable terms by \
+exploring visual associations, thematic equivalents, historical or cultural contexts, \
+and related concepts. If a term is too specific, niche, or unlikely to exist in \
+public-domain archives, reason about what that subject looks like or belongs to and \
+search for that instead.
 5. DIVERSIFIED EXPLORATION: Perform at least 3–5 searches using different keywords, \
 synonyms, time periods (date_filter), or specific collections.
 6. SEARCH SCALE: Set max_results to 25–40 per call. The curator needs a large pool \
 to choose from — aim for at least 5× the target fragment count across all searches.
-7. ZERO-RESULT FALLBACK: When search_images returns count=0, the term is too specific \
-or unavailable in public-domain archives. Pivot immediately — describe what the \
-subject LOOKS LIKE (shape, colour, category) rather than its name.
-   Example: "Mickey Mouse" → ["cartoon", "mouse", "animated", "character", "illustration"]
-   Example: "Coca-Cola" → ["bottle", "drink", "label", "beverage", "advertisement"]
-   Example: "Batman" → ["superhero", "cape", "costume", "comic", "hero"]
+7. ZERO-RESULT FALLBACK: When search_images returns count=0, pivot immediately using \
+the same semantic reasoning from rule 4.
 8. FINAL RESPONSE: Once you have explored several distinct thematic angles, \
 provide a summary of the collections and search terms used.\
 """
@@ -100,21 +99,18 @@ terms. The system applies OR logic — every term independently finds results, c
 a large candidate pool for the curator to filter.
    CORRECT:   keywords=["flower", "bloom", "blossom", "petal", "flora"]
    INCORRECT: keywords=["flower"]
-5. AVOID AESTHETIC TERMS: Do not include words like "vintage", "retro", "beautiful", \
-or "cool" in keywords for curated collections — they rarely appear in original archive \
-metadata.
+5. INTELLIGENT RESEARCH: You are not limited to the literal words in the user's prompt. \
+Think semantically — translate the user's intent into the most searchable terms by \
+exploring visual associations, thematic equivalents, historical or cultural contexts, \
+and related concepts. If a subject is too specific, niche, or unlikely to appear in \
+public-domain archives, reason about what it looks like or belongs to and search for \
+that instead. Use this thinking proactively, before planning individual searches.
 6. CALCULATE YOUR TARGET: Plan for a total candidate pool of 5× max_items. \
 Distribute max_results across searches to reach this total. \
 E.g. for max_items=20 → 100 candidates → 5 searches × max_results=20 each.
-7. PRE-EMPTIVE ALTERNATIVES: For any subject that is copyrighted, trademarked, or \
-niche (fictional characters, brand names, specific celebrities), plan an alternative \
-search using visual descriptors instead of the proper name.
-   Example: "Mickey Mouse" → keywords=["cartoon", "mouse", "animated", "illustration"]
-   Example: "Superman" → keywords=["superhero", "cape", "costume", "flying", "comic"]
-   Example: "iPhone" → keywords=["telephone", "device", "screen", "technology"]
-8. DIVERSIFY: Cover distinct thematic angles, time periods, collections, and \
+7. DIVERSIFY: Cover distinct thematic angles, time periods, collections, and \
 keyword variations. Do not repeat the same angle twice.
-9. COMPLETE: Once the planned pool reaches approximately 5× max_items, stop \
+8. COMPLETE: Once the planned pool reaches approximately 5× max_items, stop \
 planning and respond with a brief summary of the strategy.\
 """
 
