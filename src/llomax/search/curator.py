@@ -7,7 +7,7 @@ from loguru import logger
 
 from llomax.models import Fragment, SourceImage
 
-_CURATOR_MODEL = "claude-sonnet-4-5-20250929"
+_CURATOR_MODEL = "claude-haiku-4-5-20251001"
 
 _SYSTEM_PROMPT = """\
 You are an art curator selecting individual visual fragments for a collage. Each \

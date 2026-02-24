@@ -10,7 +10,7 @@ from llomax.search.clients.internet_archive_client import InternetArchiveClient,
 
 MAX_AGENT_TURNS = 10
 
-_DEFAULT_MODEL = "claude-sonnet-4-5-20250929"
+_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
 
 _SYSTEM_PROMPT = """\
 You are a creative search agent for the Internet Archive. Your goal is to build \
