@@ -4,6 +4,7 @@ import json
 
 import anthropic
 from anthropic.types import ToolParam
+from loguru import logger
 
 from llomax.search.clients.internet_archive_client import InternetArchiveClient, ImageResult
 
@@ -152,6 +153,9 @@ class InternetArchiveAgent:
         Args:
             prompt: Creative text prompt describing the desired collage.
             max_items: Target number of images for the final collage.
+
+        Returns:
+            Deduplicated list of ``ImageResult`` items collected across all agent turns.
         """
         results_by_id: dict[str, ImageResult] = {}
         user_content = f"The user wants {max_items} images for the final collage.\n\n{prompt}"
@@ -165,6 +169,8 @@ class InternetArchiveAgent:
                 tools=_TOOLS,
                 messages=messages,
             )
+
+            self._log_agent_reasoning(response)
 
             if response.stop_reason == "end_turn":
                 break
@@ -207,6 +213,8 @@ class InternetArchiveAgent:
                 messages=messages,
             )
 
+            self._log_agent_reasoning(response)
+
             if response.stop_reason == "end_turn":
                 break
 
@@ -215,6 +223,22 @@ class InternetArchiveAgent:
             messages.append({"role": "user", "content": tool_results})
 
         return plan
+
+    def _log_agent_reasoning(self, response) -> None:
+        """Log any free-text reasoning blocks present in the agent response.
+
+        The agent interleaves ``text`` blocks with ``tool_use`` blocks. Text
+        blocks contain the model's step-by-step reasoning and are logged at
+        DEBUG level so they appear in the pipeline log without cluttering
+        normal INFO output.
+
+        Args:
+            response: Anthropic API response whose ``content`` list may
+                contain ``text`` and/or ``tool_use`` blocks.
+        """
+        for block in response.content:
+            if block.type == "text" and block.text.strip():
+                logger.debug("[agent reasoning] {}", block.text.strip())
 
     def _dispatch_tool(self, tool_name: str, tool_input: dict) -> str:
         """Route a tool call to the corresponding InternetArchiveClient method and return JSON.
@@ -287,6 +311,25 @@ class InternetArchiveAgent:
             )
         return tool_results
 
+    def _build_plan_item(self, tool_input: dict) -> dict:
+        """Build a search plan item dict from a ``search_images`` tool call input.
+
+        Args:
+            tool_input: Tool input dict containing at minimum a ``keywords`` key
+                and optionally ``collection``, ``date_filter``, and ``max_results``.
+
+        Returns:
+            Plan item dict with ``keywords`` and any provided optional fields.
+        """
+        item: dict = {"keywords": tool_input["keywords"]}
+        if tool_input.get("collection"):
+            item["collection"] = tool_input["collection"]
+        if tool_input.get("date_filter"):
+            item["date_filter"] = tool_input["date_filter"]
+        if tool_input.get("max_results") is not None:
+            item["max_results"] = tool_input["max_results"]
+        return item
+
     def _process_planning_tool_calls(self, response, plan: list[dict]) -> list[dict]:
         """Process tool calls in planning mode.
 
@@ -306,14 +349,7 @@ class InternetArchiveAgent:
                 continue
 
             if block.name == "search_images":
-                item: dict = {"keywords": block.input["keywords"]}
-                if block.input.get("collection"):
-                    item["collection"] = block.input["collection"]
-                if block.input.get("date_filter"):
-                    item["date_filter"] = block.input["date_filter"]
-                if block.input.get("max_results") is not None:
-                    item["max_results"] = block.input["max_results"]
-                plan.append(item)
+                plan.append(self._build_plan_item(block.input))
                 result_text = json.dumps({"status": "Search parameters recorded in the plan"})
             else:
                 result_text = self._dispatch_tool(block.name, block.input)
