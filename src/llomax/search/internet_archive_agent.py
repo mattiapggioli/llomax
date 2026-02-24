@@ -224,6 +224,44 @@ class InternetArchiveAgent:
 
         return plan
 
+    def _log_tool_call(self, tool_name: str, tool_input: dict, result_text: str) -> None:
+        """Log the input and outcome of a single tool call at DEBUG level.
+
+        Args:
+            tool_name: Name of the tool that was invoked.
+            tool_input: Input parameters supplied to the tool.
+            result_text: JSON string returned by the tool.
+        """
+        if tool_name == "find_collections":
+            logger.debug(
+                "[find_collections] keywords={!r}", tool_input.get("keywords", "")
+            )
+            collections = json.loads(result_text)
+            if collections:
+                for col in collections:
+                    logger.debug(
+                        "  collection found: {} — {!r}",
+                        col.get("identifier", "?"),
+                        col.get("title", ""),
+                    )
+            else:
+                logger.debug("  (no collections found)")
+
+        elif tool_name == "search_images":
+            logger.debug(
+                "[search_images] keywords={!r}, collection={}, date_filter={}, max_results={}",
+                tool_input.get("keywords", ""),
+                tool_input.get("collection"),
+                tool_input.get("date_filter"),
+                tool_input.get("max_results"),
+            )
+            try:
+                results = json.loads(result_text)
+                if isinstance(results, list):
+                    logger.debug("  {} result(s) returned", len(results))
+            except Exception:
+                pass
+
     def _log_agent_reasoning(self, response) -> None:
         """Log any free-text reasoning blocks present in the agent response.
 
@@ -298,6 +336,7 @@ class InternetArchiveAgent:
                 continue
 
             result_text = self._dispatch_tool(block.name, block.input)
+            self._log_tool_call(block.name, block.input, result_text)
 
             if block.name == "search_images":
                 self._collect_image_results(result_text, results_by_id)
@@ -353,6 +392,8 @@ class InternetArchiveAgent:
                 result_text = json.dumps({"status": "Search parameters recorded in the plan"})
             else:
                 result_text = self._dispatch_tool(block.name, block.input)
+
+            self._log_tool_call(block.name, block.input, result_text)
 
             tool_results.append(
                 {
