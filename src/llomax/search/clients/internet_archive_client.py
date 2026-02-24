@@ -90,55 +90,95 @@ class InternetArchiveClient:
         date_filter: str | None = None,
         max_results: int = 20,
     ) -> list[ImageResult]:
-        """Search for images using Lucene keywords, with optional collection and date filters."""
+        """Search for images using Lucene keywords, with optional collection and date filters.
+
+        Args:
+            keywords: Lucene boolean keyword expression.
+            collection: Optional Internet Archive collection identifier to restrict results.
+            date_filter: Optional date range in IA Lucene format, e.g. ``"1900 TO 1950"``.
+            max_results: Maximum number of results to return.
+
+        Returns:
+            List of ``ImageResult`` dicts with identifier, title, creator, date,
+            description, thumbnail_url, and details_url.
+        """
         query = self._build_query(keywords, "image", collection, date_filter)
-        results: list[ImageResult] = []
-        for item in itertools.islice(
+        items = itertools.islice(
             internetarchive.search_items(query, fields=IMAGE_FIELDS), max_results
-        ):
-            identifier = item.get("identifier", "")
-            if not identifier:
-                continue
-            results.append(
-                ImageResult(
-                    identifier=identifier,
-                    title=item.get("title", ""),
-                    creator=item.get("creator", ""),
-                    date=item.get("date", ""),
-                    description=item.get("description", ""),
-                    thumbnail_url=THUMBNAIL_URL_TEMPLATE.format(identifier=identifier),
-                    details_url=DETAILS_URL_TEMPLATE.format(identifier=identifier),
-                )
-            )
-        return results
+        )
+        return [
+            self._image_result_from_item(item)
+            for item in items
+            if item.get("identifier", "")
+        ]
 
     def find_collections(
         self,
         keywords: str,
         max_results: int = 10,
     ) -> list[CollectionResult]:
-        """Search for Internet Archive collections by keyword."""
+        """Search for Internet Archive collections by keyword.
+
+        Args:
+            keywords: Search keywords to match collection titles and descriptions.
+            max_results: Maximum number of results to return.
+
+        Returns:
+            List of ``CollectionResult`` dicts with identifier, title,
+            description, and details_url.
+        """
         query = self._build_query(keywords, "collection")
-        results: list[CollectionResult] = []
-        for item in itertools.islice(
+        items = itertools.islice(
             internetarchive.search_items(query, fields=COLLECTION_FIELDS), max_results
-        ):
-            identifier = item.get("identifier", "")
-            if not identifier:
-                continue
-            results.append(
-                CollectionResult(
-                    identifier=identifier,
-                    title=item.get("title", ""),
-                    description=item.get("description", ""),
-                    details_url=DETAILS_URL_TEMPLATE.format(identifier=identifier),
-                )
-            )
-        return results
+        )
+        return [
+            self._collection_result_from_item(item)
+            for item in items
+            if item.get("identifier", "")
+        ]
 
     def get_curated_collections(self) -> list[CuratedCollection]:
         """Return the hardcoded list of curated collections."""
         return list(CURATED_COLLECTIONS)
+
+    def _image_result_from_item(self, item: dict) -> ImageResult:
+        """Build an ``ImageResult`` from a raw Internet Archive search item.
+
+        Args:
+            item: Raw search result dict from the ``internetarchive`` library.
+
+        Returns:
+            ``ImageResult`` with identifier, title, creator, date, description,
+            thumbnail_url, and details_url populated.
+        """
+        identifier = item["identifier"]
+        return ImageResult(
+            identifier=identifier,
+            title=item.get("title", ""),
+            creator=item.get("creator", ""),
+            date=item.get("date", ""),
+            description=item.get("description", ""),
+            thumbnail_url=THUMBNAIL_URL_TEMPLATE.format(identifier=identifier),
+            details_url=DETAILS_URL_TEMPLATE.format(identifier=identifier),
+        )
+
+    def _collection_result_from_item(self, item: dict) -> CollectionResult:
+        """Build a ``CollectionResult`` from a raw Internet Archive search item.
+
+        Args:
+            item: Raw search result dict from the ``internetarchive`` library.
+
+        Returns:
+            ``CollectionResult`` with identifier, title, description,
+            and details_url populated.
+        """
+        identifier = item["identifier"]
+        return CollectionResult(
+            identifier=identifier,
+            title=item.get("title", ""),
+            description=item.get("description", ""),
+            details_url=DETAILS_URL_TEMPLATE.format(identifier=identifier),
+        )
 
     def _build_query(
         self,
