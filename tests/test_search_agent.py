@@ -296,7 +296,7 @@ class TestCurator:
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         candidates = [_make_source("id1"), _make_source("id2"), _make_source("id3")]
-        selected = await select_sources("prompt", candidates, mock_client)
+        selected = await select_sources("prompt", candidates, {}, mock_client)
         assert selected == ["id1", "id3"]
 
     async def test_handles_markdown_fenced_json(self):
@@ -309,7 +309,7 @@ class TestCurator:
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-        selected = await select_sources("prompt", [], mock_client)
+        selected = await select_sources("prompt", [], {}, mock_client)
         assert selected == ["id1"]
 
     async def test_handles_non_list_response(self):
@@ -322,10 +322,10 @@ class TestCurator:
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-        selected = await select_sources("prompt", [], mock_client)
+        selected = await select_sources("prompt", [], {}, mock_client)
         assert selected == []
 
-    async def test_respects_max_sources(self):
+    async def test_respects_max_fragments(self):
         mock_response = MagicMock()
         text_block = MagicMock()
         text_block.type = "text"
@@ -336,10 +336,10 @@ class TestCurator:
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         candidates = [_make_source("id1"), _make_source("id2")]
-        selected = await select_sources("prompt", candidates, mock_client, max_sources=5)
+        selected = await select_sources("prompt", candidates, {}, mock_client, max_fragments=5)
         assert selected == ["id1", "id2"]
         user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
-        assert "up to 5" in user_msg
+        assert "5" in user_msg
 
     async def test_filters_non_string_items(self):
         mock_response = MagicMock()
@@ -351,7 +351,7 @@ class TestCurator:
         mock_client = AsyncMock()
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
-        selected = await select_sources("prompt", [], mock_client)
+        selected = await select_sources("prompt", [], {}, mock_client)
         assert selected == ["id1", "id2"]
 
     async def test_candidate_summaries_sent_to_llm(self):
@@ -365,11 +365,39 @@ class TestCurator:
         mock_client.messages.create = AsyncMock(return_value=mock_response)
 
         candidates = [_make_source("img1", title="A Fine Painting")]
-        await select_sources("prompt", candidates, mock_client)
+        await select_sources("prompt", candidates, {}, mock_client)
 
         user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
         assert "img1" in user_msg
         assert "A Fine Painting" in user_msg
+        assert "fragment_count" in user_msg
+
+    async def test_fragment_labels_included_in_summary(self):
+        from PIL import Image as PILImage
+
+        from llomax.models import Fragment
+
+        mock_response = MagicMock()
+        text_block = MagicMock()
+        text_block.type = "text"
+        text_block.text = "[]"
+        mock_response.content = [text_block]
+
+        mock_client = AsyncMock()
+        mock_client.messages.create = AsyncMock(return_value=mock_response)
+
+        fragment = Fragment(
+            source_id="img1",
+            image_rgba=PILImage.new("RGBA", (10, 10)),
+            bounding_box=(0, 0, 10, 10),
+            label="person",
+        )
+        candidates = [_make_source("img1")]
+        await select_sources("prompt", candidates, {"img1": [fragment]}, mock_client)
+
+        user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
+        assert "person" in user_msg
+        assert "fragment_count" in user_msg
 
 
 # ---------------------------------------------------------------------------

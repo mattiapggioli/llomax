@@ -139,30 +139,44 @@ class Pipeline:
         cached = sum(1 for s in source_candidates if s.local_path is not None)
         logger.info("Stage 3 complete — {}/{} thumbnail(s) available.", cached, len(source_candidates))
 
-        # Stage 4: Select the best source images.
+        # Stage 4: Segment all candidates to discover their visual content.
+        logger.info("Stage 4 — Segmenting {} candidate(s)...", len(source_candidates))
+        all_fragments: list[Fragment] = await self.analysis_client.analyze(source_candidates)
+        fragments_by_source: dict[str, list[Fragment]] = {}
+        for f in all_fragments:
+            fragments_by_source.setdefault(f.source_id, []).append(f)
+        sources_with_fragments = sum(1 for v in fragments_by_source.values() if v)
         logger.info(
-            "Stage 4 — Curating: selecting up to {} source(s) from {} candidate(s)...",
-            max_items, len(source_candidates),
+            "Stage 4 complete — {} fragment(s) extracted from {}/{} candidate(s).",
+            len(all_fragments), sources_with_fragments, len(source_candidates),
         )
-        selected_ids = await select_sources(
-            prompt, source_candidates, self.anthropic_client, max_sources=max_items
-        )
-        selected_set = set(selected_ids)
-        selected_sources = [s for s in source_candidates if s.external_id in selected_set]
-        logger.info("Stage 4 complete — curator selected {} source(s).", len(selected_sources))
-        for src in selected_sources:
-            logger.debug("  Selected: {} — {!r}", src.external_id, src.title)
-
-        # Stage 5: Segment selected sources into fragments.
-        logger.info("Stage 5 — Segmenting {} selected source(s)...", len(selected_sources))
-        fragments: list[Fragment] = await self.analysis_client.analyze(selected_sources)
-        logger.info("Stage 5 complete — {} fragment(s) extracted.", len(fragments))
-
         label_counts: dict[str, int] = {}
-        for f in fragments:
+        for f in all_fragments:
             label_counts[f.label] = label_counts.get(f.label, 0) + 1
         for label, count in sorted(label_counts.items(), key=lambda kv: -kv[1]):
             logger.debug("  {!r}: {} fragment(s)", label, count)
+
+        # Stage 5: Select sources based on metadata and detected fragment content.
+        logger.info(
+            "Stage 5 — Curating: selecting sources to yield ~{} fragment(s) from {} candidate(s)...",
+            max_items, len(source_candidates),
+        )
+        selected_ids = await select_sources(
+            prompt, source_candidates, fragments_by_source, self.anthropic_client,
+            max_fragments=max_items,
+        )
+        selected_set = set(selected_ids)
+        selected_sources = [s for s in source_candidates if s.external_id in selected_set]
+        fragments: list[Fragment] = [
+            f for sid in selected_ids for f in fragments_by_source.get(sid, [])
+        ]
+        logger.info(
+            "Stage 5 complete — {} source(s) selected, {} fragment(s) for composition.",
+            len(selected_sources), len(fragments),
+        )
+        for src in selected_sources:
+            n = len(fragments_by_source.get(src.external_id, []))
+            logger.debug("  Selected: {} ({} fragment(s)) — {!r}", src.external_id, n, src.title)
 
         # Stage 6: Annotate fragments with placeholder labels and descriptions.
         logger.info("Stage 6 — Annotating {} fragment(s)...", len(fragments))
