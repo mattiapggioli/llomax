@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import os
+from datetime import datetime
 from pathlib import Path
 from typing import Callable
 
 import anthropic
+from loguru import logger
 
 from llomax.analysis.annotator import PlaceholderAnnotator
 from llomax.analysis.client import AnalysisClient
@@ -36,7 +38,8 @@ class Pipeline:
         Args:
             search_agent: Agent for discovering images on the Internet Archive.
             analysis_client: Backend for segmenting source images into fragments.
-                Use ``Segmenter`` for SAM-based segmentation or
+                Use ``Segmenter`` for SAM-based segmentation,
+                ``YoloAnalysisClient`` for YOLO instance segmentation, or
                 ``PlaceholderAnalysisClient`` for testing without a model.
             annotator: Annotation backend that labels fragments. Defaults to
                 ``PlaceholderAnnotator`` when not provided.
@@ -78,35 +81,109 @@ class Pipeline:
         Returns:
             The composed ``CollageOutput``.
         """
+        output_dir = Path(os.environ.get("OUTPUT_DIR", "output"))
+        run_dir = output_dir / datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        log_sink_id = logger.add(
+            run_dir / "pipeline.log",
+            format="{time:YYYY-MM-DD HH:mm:ss} | {level:<8} | {message}",
+            level="DEBUG",
+            encoding="utf-8",
+        )
+
+        try:
+            return await self._run_stages(prompt, canvas_size, max_items, output_dir, run_dir)
+        finally:
+            logger.remove(log_sink_id)
+
+    async def _run_stages(
+        self,
+        prompt: str,
+        canvas_size: tuple[int, int],
+        max_items: int,
+        output_dir: Path,
+        run_dir: Path,
+    ) -> CollageOutput:
+        """Execute all pipeline stages with detailed logging.
+
+        Args:
+            prompt: Creative text prompt describing the desired collage.
+            canvas_size: ``(width, height)`` in pixels for the output canvas.
+            max_items: Target number of source images for curation.
+            output_dir: Base directory for pipeline outputs.
+            run_dir: Pre-created timestamped run directory.
+
+        Returns:
+            The composed ``CollageOutput``.
+        """
         # Stage 1: Plan searches.
+        logger.info("Stage 1 — Planning search. Prompt: {!r}", prompt)
         search_plan = await self.search_agent.plan_search(prompt, max_items=max_items)
+        logger.info("Stage 1 complete — {} search intent(s) registered.", len(search_plan))
+        for i, item in enumerate(search_plan, 1):
+            logger.debug("  Plan {}: keywords={!r}, collection={}, date_filter={}", i,
+                         item.get("keywords"), item.get("collection"), item.get("date_filter"))
 
         # Stage 2: Execute plan directly in Python.
+        logger.info("Stage 2 — Executing search plan ({} queries)...", len(search_plan))
         raw_results = self._execute_search_plan(search_plan)
         source_candidates = self._build_source_images(raw_results)
+        logger.info("Stage 2 complete — {} unique candidate source(s) discovered.",
+                    len(source_candidates))
 
         # Stage 3: Download thumbnails for all candidates.
+        logger.info("Stage 3 — Downloading thumbnails for {} candidate(s) to {}...",
+                    len(source_candidates), self.thumbnails_dir)
         await download_thumbnails(source_candidates, self.thumbnails_dir)
+        cached = sum(1 for s in source_candidates if s.local_path is not None)
+        logger.info("Stage 3 complete — {}/{} thumbnail(s) available.", cached, len(source_candidates))
 
         # Stage 4: Select the best source images.
+        logger.info(
+            "Stage 4 — Curating: selecting up to {} source(s) from {} candidate(s)...",
+            max_items, len(source_candidates),
+        )
         selected_ids = await select_sources(
             prompt, source_candidates, self.anthropic_client, max_sources=max_items
         )
         selected_set = set(selected_ids)
         selected_sources = [s for s in source_candidates if s.external_id in selected_set]
+        logger.info("Stage 4 complete — curator selected {} source(s).", len(selected_sources))
+        for src in selected_sources:
+            logger.debug("  Selected: {} — {!r}", src.external_id, src.title)
 
         # Stage 5: Segment selected sources into fragments.
+        logger.info("Stage 5 — Segmenting {} selected source(s)...", len(selected_sources))
         fragments: list[Fragment] = await self.analysis_client.analyze(selected_sources)
+        logger.info("Stage 5 complete — {} fragment(s) extracted.", len(fragments))
+
+        label_counts: dict[str, int] = {}
+        for f in fragments:
+            label_counts[f.label] = label_counts.get(f.label, 0) + 1
+        for label, count in sorted(label_counts.items(), key=lambda kv: -kv[1]):
+            logger.debug("  {!r}: {} fragment(s)", label, count)
 
         # Stage 6: Annotate fragments with placeholder labels and descriptions.
+        logger.info("Stage 6 — Annotating {} fragment(s)...", len(fragments))
         self.annotator.annotate(selected_sources, fragments)
+        logger.info("Stage 6 complete — fragments annotated.")
 
         # Stage 7: Compose collage.
+        logger.info(
+            "Stage 7 — Composing collage: {} fragment(s) onto {}×{} canvas...",
+            len(fragments), canvas_size[0], canvas_size[1],
+        )
         collage = self.compose_fn(fragments, canvas_size)
+        logger.info(
+            "Stage 7 complete — collage composed ({} fragment(s) placed).",
+            len(collage.fragment_provenance),
+        )
 
         # Stage 8: Save output.
-        output_dir = os.environ.get("OUTPUT_DIR", "output")
-        save_run(collage, source_candidates, prompt, canvas_size, output_dir)
+        logger.info("Stage 8 — Saving output to {}...", run_dir)
+        save_run(collage, source_candidates, prompt, canvas_size, output_dir, run_dir=run_dir)
+        logger.info("Pipeline complete. Run artifacts saved to {}", run_dir)
 
         return collage
 
@@ -137,31 +214,40 @@ class Pipeline:
     def _build_source_images(self, raw_results: list[ImageResult]) -> list[SourceImage]:
         """Build ``SourceImage`` objects from raw Internet Archive results.
 
+        Results are already deduplicated by ``_execute_search_plan``; items
+        without an identifier are silently skipped.
+
         Args:
             raw_results: Raw image results from the search plan execution.
 
         Returns:
-            Deduplicated list of ``SourceImage`` objects ready for thumbnail download.
+            List of ``SourceImage`` objects ready for thumbnail download.
         """
-        seen_ids: set[str] = set()
-        sources: list[SourceImage] = []
-        for item in raw_results:
-            ident = item.get("identifier", "")
-            if not ident or ident in seen_ids:
-                continue
-            seen_ids.add(ident)
-            sources.append(
-                SourceImage(
-                    external_id=ident,
-                    title=item.get("title", ""),
-                    description=item.get("description", ""),
-                    local_path=None,
-                    metadata={
-                        "creator": item.get("creator", ""),
-                        "year": item.get("date", "")[:4] if item.get("date") else "",
-                        "thumbnail_url": f"https://archive.org/services/img/{ident}",
-                        "details_url": f"https://archive.org/details/{ident}",
-                    },
-                )
-            )
-        return sources
+        return [
+            self._source_image_from_item(item)
+            for item in raw_results
+            if item.get("identifier", "")
+        ]
+
+    def _source_image_from_item(self, item: ImageResult) -> SourceImage:
+        """Build a ``SourceImage`` from a raw Internet Archive result.
+
+        Args:
+            item: Raw image result with at minimum an ``identifier`` key.
+
+        Returns:
+            ``SourceImage`` with metadata populated from the result fields.
+        """
+        ident = item["identifier"]
+        return SourceImage(
+            external_id=ident,
+            title=item.get("title", ""),
+            description=item.get("description", ""),
+            local_path=None,
+            metadata={
+                "creator": item.get("creator", ""),
+                "year": item.get("date", "")[:4] if item.get("date") else "",
+                "thumbnail_url": f"https://archive.org/services/img/{ident}",
+                "details_url": f"https://archive.org/details/{ident}",
+            },
+        )

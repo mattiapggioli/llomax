@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import logging
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import numpy as np
+from loguru import logger
 from PIL import Image
 
 from llomax.models import Fragment, SourceImage
 
-logger = logging.getLogger(__name__)
+if TYPE_CHECKING:
+    import torch
 
 _DEFAULT_MODEL_TYPE = "vit_b"
 _DEFAULT_CHECKPOINT = "sam_vit_b_01ec64.pth"
@@ -59,6 +61,8 @@ class Segmenter:
         self._min_mask_area = min_mask_area
         self._min_stability_score = min_stability_score
         self._mask_generator = None
+        self._ov_compiled = None
+        self._ov_output_key = None
 
     # ------------------------------------------------------------------
     # Public API
@@ -113,6 +117,11 @@ class Segmenter:
     # ------------------------------------------------------------------
 
     def _get_mask_generator(self):
+        """Return the cached mask generator, building it on first access.
+
+        Returns:
+            The ``SamAutomaticMaskGenerator`` instance, initialised once and reused.
+        """
         if self._mask_generator is None:
             self._mask_generator = self._build_mask_generator()
         return self._mask_generator
@@ -151,7 +160,6 @@ class Segmenter:
             A ``SamAutomaticMaskGenerator`` backed by the OpenVINO encoder.
         """
         import openvino as ov
-        import torch
         from segment_anything import SamAutomaticMaskGenerator, sam_model_registry
 
         ir_dir = self._openvino_cache_dir
@@ -163,18 +171,14 @@ class Segmenter:
             self._export_encoder_to_openvino(onnx_path, ir_xml)
 
         core = ov.Core()
-        compiled = core.compile_model(str(ir_xml), device_name=self._device)
-        output_key = compiled.output(0)
+        self._ov_compiled = core.compile_model(str(ir_xml), device_name=self._device)
+        self._ov_output_key = self._ov_compiled.output(0)
         logger.info("SAM encoder compiled on OpenVINO device: %s", self._device)
 
         sam = sam_model_registry[self._model_type](checkpoint=str(self._checkpoint_path))
         sam.eval()
 
-        def _ov_forward(x: torch.Tensor) -> torch.Tensor:
-            result = compiled({0: x.detach().cpu().numpy()})[output_key]
-            return torch.from_numpy(result)
-
-        sam.image_encoder.forward = _ov_forward
+        sam.image_encoder.forward = self._ov_forward
 
         return SamAutomaticMaskGenerator(
             sam,
@@ -182,6 +186,23 @@ class Segmenter:
             stability_score_thresh=self._min_stability_score,
             min_mask_region_area=self._min_mask_area,
         )
+
+    def _ov_forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Run the OpenVINO-compiled encoder forward pass.
+
+        Replaces ``sam.image_encoder.forward`` so ``SamAutomaticMaskGenerator``
+        uses the compiled model for inference.
+
+        Args:
+            x: Image tensor from SAM's preprocessing pipeline.
+
+        Returns:
+            Image embedding tensor produced by the OpenVINO compiled encoder.
+        """
+        import torch
+
+        result = self._ov_compiled({0: x.detach().cpu().numpy()})[self._ov_output_key]
+        return torch.from_numpy(result)
 
     # ------------------------------------------------------------------
     # OpenVINO export

@@ -8,6 +8,7 @@ dependencies = [
     "anthropic",
     "httpx",
     "internetarchive>=5.7.2",
+    "loguru",
     "numpy",
     "onnx",
     "opencv-python",
@@ -16,6 +17,7 @@ dependencies = [
     "segment-anything",
     "torch>=2.0",
     "torchvision",
+    "ultralytics",
 ]
 
 [project.scripts]

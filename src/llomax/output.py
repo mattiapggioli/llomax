@@ -13,6 +13,7 @@ def save_run(
     prompt: str,
     canvas_size: tuple[int, int],
     output_dir: str | Path,
+    run_dir: Path | None = None,
 ) -> Path:
     """Save a collage and metadata to a timestamped subdirectory.
 
@@ -27,13 +28,17 @@ def save_run(
         prompt: The original search prompt.
         canvas_size: ``(width, height)`` of the canvas.
         output_dir: Base directory for pipeline outputs.
+        run_dir: Pre-created run directory. When provided, ``output_dir``
+            is ignored for directory creation; the caller is responsible
+            for creating the directory before calling this function.
 
     Returns:
         Path to the created run directory.
     """
-    timestamp = datetime.now()
-    dir_name = timestamp.strftime("%Y-%m-%d_%H-%M-%S")
-    run_dir = Path(output_dir) / dir_name
+    if run_dir is None:
+        timestamp = datetime.now()
+        dir_name = timestamp.strftime("%Y-%m-%d_%H-%M-%S")
+        run_dir = Path(output_dir) / dir_name
     run_dir.mkdir(parents=True, exist_ok=True)
 
     collage.image.save(run_dir / "collage.png")

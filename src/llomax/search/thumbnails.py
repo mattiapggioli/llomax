@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import logging
 from io import BytesIO
 from pathlib import Path
 
 import httpx
+from loguru import logger
 from PIL import Image
 
 from llomax.models import SourceImage
-
-logger = logging.getLogger(__name__)
 
 
 async def download_thumbnails(
