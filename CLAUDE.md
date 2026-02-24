@@ -21,39 +21,41 @@ Pytest is configured with `asyncio_mode = "auto"` — async test functions run a
 
 ## Architecture
 
-Five-stage pipeline orchestrated by `Pipeline` (`src/llomax/pipeline.py`):
+Eight-stage pipeline orchestrated by `Pipeline` (`src/llomax/pipeline.py`):
 
 ```
-InternetArchiveAgent.plan_search(prompt)
-  → select_sources(candidates)          # LLM curator picks SourceImages
-  → download_thumbnails(sources)        # save to cache_dir/{id}.jpg
-  → AnalysisClient.analyze(sources)     # SAM segmentation → Fragments
-  → PlaceholderAnnotator.annotate()     # label + describe each Fragment
-  → compose(fragments, canvas_size)     # RGBA alpha-composite onto canvas
+InternetArchiveAgent.plan_search(prompt)   # LLM registers search intents (no execution)
+  → _execute_search_plan(plan)             # Python runs each query via InternetArchiveClient
+  → download_thumbnails(sources)           # save to cache_dir/{id}.jpg
+  → AnalysisClient.analyze(sources)        # segmentation → Fragments
+  → select_fragments(fragments)            # LLM curator picks individual Fragments
+  → PlaceholderAnnotator.annotate()        # label + describe each Fragment
+  → compose(fragments, canvas_size)        # RGBA alpha-composite onto canvas
+  → save_run(collage, ...)                 # write collage.png + metadata.json
 ```
 
 ### Stage 1: Discovery (`src/llomax/search/`)
 
-`InternetArchiveAgent` (`internet_archive_agent.py`) runs a structured LLM agent loop (max 10 turns) with two "blinded" tools that dispatch directly to `InternetArchiveClient`:
+`InternetArchiveAgent` (`internet_archive_agent.py`) runs a structured LLM agent loop (max 10 turns) with two tools that dispatch to `InternetArchiveClient`:
 
-- **`search_images`** — Lucene boolean keywords, optional collection/date filter. Mediatype:image is enforced by the client.
-- **`find_collections`** — Discover IA collections by keyword. Mediatype:collection is enforced.
+- **`search_images`** — accepts `keywords: list[str]` joined with OR by default. Returns `{"results": [...], "count": N}`; adds a `"suggestion"` key when `count == 0` to guide the agent toward a semantic fallback. Mediatype:image is enforced by the client.
+- **`find_collections`** — discovers IA collections by keyword list (OR-joined). Mediatype:collection is enforced.
 
-`plan_search()` records search intents without executing them; `_execute_search_plan()` in `Pipeline` runs them in Python.
+`plan_search()` records search intents without executing them. `_execute_search_plan()` in `Pipeline` runs them directly via `InternetArchiveClient`. The planner targets a candidate pool of **5× max_items**.
 
 Supporting files:
-- **`clients/internet_archive_client.py`** — `InternetArchiveClient` wraps the `internetarchive` Python library. Three methods: `search_images()`, `find_collections()`, `get_curated_collections()`. All enforce correct mediatypes.
-- **`thumbnails.py`** — `download_thumbnails(sources, cache_dir)` saves each thumbnail as `{cache_dir}/{external_id}.jpg` and sets `source.local_path`. Already-cached files are reused.
+- **`clients/internet_archive_client.py`** — `InternetArchiveClient`. `_build_query` joins a `list[str]` with OR and strips terms implicit to the collection via `_COLLECTION_IMPLICIT_TERMS` (e.g. "space" is redundant when `collection="nasa"`). Falls back to the original keyword list if all terms would be stripped.
+- **`thumbnails.py`** — `download_thumbnails(sources, cache_dir)` saves each thumbnail as `{cache_dir}/{external_id}.jpg`. Already-cached files are reused.
 
-### Stage 2: Source Selection (`src/llomax/search/curator.py`)
+### Stage 2: Curator (`src/llomax/search/curator.py`)
 
-`select_sources()` takes `SourceImage` candidates (external_id, title, description, year, creator) and makes a single Claude API call (claude-sonnet-4-5-20250929) to select the best source images for the collage. Returns a JSON array of selected `external_id` strings. No tool use — structured output only.
+`select_fragments()` takes all extracted `Fragment` objects (label, pixel dimensions, parent source context) and makes a single `claude-haiku-4-5-20251001` call to pick the best subset for the collage. Returns a list of selected `fragment_id` strings. No tool use — structured JSON output only.
 
 ### Stage 3: Segmentation (`src/llomax/analysis/`)
 
 `AnalysisClient` is a `Protocol` with a single async method `analyze(sources) -> list[Fragment]`.
 
-- **`Segmenter`** (`segmenter.py`) — SAM `AutomaticMaskGenerator` backend. On first use it exports the SAM image encoder (ViT) to OpenVINO IR format and compiles it with `device_name="AUTO"` to target the Intel Arc GPU or NPU. Falls back to PyTorch CPU if OpenVINO is unavailable. Each mask becomes a `Fragment` with a transparent RGBA background. Also implements `analyze()` for protocol conformance.
+- **`Segmenter`** (`segmenter.py`) — SAM `AutomaticMaskGenerator` backend. On first use it exports the SAM image encoder (ViT) to OpenVINO IR and compiles it with `device_name="AUTO"` to target the Intel Arc GPU or NPU. Falls back to PyTorch CPU if OpenVINO is unavailable. Each mask becomes a `Fragment` with a transparent RGBA background.
 - **`PlaceholderAnalysisClient`** (`client.py`) — Passthrough: wraps each source image as a single full-frame `Fragment`. No model required; use for testing the pipeline end-to-end.
 
 ### Stage 4: Annotation (`src/llomax/analysis/annotator.py`)
@@ -72,7 +74,7 @@ Replace method bodies with live `anthropic.AsyncAnthropic` vision calls once a r
 ### Domain Models (`src/llomax/models.py`)
 
 - `SourceImage` — Internet Archive item: `external_id`, `title`, `description`, `local_path`, `metadata` dict (creator, year, thumbnail_url, details_url). `load_image()` reads from `local_path`.
-- `Fragment` — Extracted visual segment: `source_id`, `image_rgba` (RGBA PIL Image), `bounding_box` (x1,y1,x2,y2), `label`, `description`.
+- `Fragment` — Extracted visual segment: `source_id`, `image_rgba` (RGBA PIL Image), `bounding_box` (x1,y1,x2,y2), `label`, `description`, `fragment_id` (auto-generated UUID).
 - `CollageOutput` — Final composed RGB `Image` with canvas dimensions and `fragment_provenance` list.
 
 All are `@dataclass` types.
@@ -81,6 +83,7 @@ All are `@dataclass` types.
 
 - Async-first for all I/O (HTTP, Anthropic API). Tests use pytest-asyncio auto mode.
 - `from __future__ import annotations` in all modules.
+- All logging via `loguru.logger`. Pipeline adds a per-run file sink at `{run_dir}/pipeline.log`.
 - Protocol-based abstractions for swappable backends (see `AnalysisClient`).
 - Each package has explicit `__all__` exports in `__init__.py`.
 - No module-level docstrings. Classes, methods, and functions use Google-style docstrings.

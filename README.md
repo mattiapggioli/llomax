@@ -149,4 +149,4 @@ src/llomax/
 
 ## License
 
-All rights reserved.
+[MIT](LICENSE)
