@@ -26,10 +26,11 @@ You are a creative search agent for the Internet Archive. Your goal is to build 
 a high-quality, diverse candidate pool for an art curator.
 
 You have two tools:
-1. **find_collections** — discover relevant IA collections by keyword.
-2. **search_images** — search for images using Lucene boolean syntax in the \
-`keywords` field. You can optionally filter by collection, date range, and set \
-max_results.
+1. **find_collections** — discover relevant IA collections using a short list of \
+broad keywords for a single theme.
+2. **search_images** — search for images by providing a list of synonyms or related \
+terms. The system joins your list with OR automatically, so each term independently \
+retrieves results.
 
 ## Curated collections (consult before searching)
 These high-quality collections are always available. Use collection=<identifier> \
@@ -39,15 +40,22 @@ in search_images whenever a theme maps to one of them:
 ## Rules
 1. CORRECT SPELLING: Fix all misspellings from the user prompt before using any \
 keyword (e.g. "astronaunts" → "astronauts", "forrest" → "forest").
-2. ONE THEME PER find_collections CALL: Search one theme at a time. The IA \
-engine treats spaces as AND — combining unrelated topics in a single call returns \
-zero results. Within a theme, use OR:
-   CORRECT:   keywords="ghost OR spirit OR haunted"
-   INCORRECT: keywords="ghost sailor forest"
-3. DIVERSIFIED EXPLORATION: Perform at least 3–5 searches using different \
-keywords, synonyms, time periods (date_filter), or specific collections.
-4. SEARCH SCALE: Set max_results to the target count per search_images call.
-5. FINAL RESPONSE: Once you have explored several distinct thematic angles, \
+2. ATOMIC DISCOVERY: When calling find_collections, use 1–2 broad keywords that \
+describe the same concept. Do not combine unrelated themes in a single call.
+   CORRECT:   keywords=["ghost", "spirit"]
+   INCORRECT: keywords=["ghost", "sailor", "forest"]
+3. BROAD SEARCH: When calling search_images, provide a list of synonyms and related \
+terms. The system applies OR logic — more terms means a larger candidate pool for the \
+curator to filter.
+   CORRECT:   keywords=["astronaut", "cosmonaut", "spaceman", "spacewalk"]
+   INCORRECT: keywords=["astronaut"]
+4. AVOID AESTHETIC TERMS: Do not include subjective words like "vintage", "retro", \
+"beautiful", or "cool" when searching curated collections — these terms rarely appear \
+in original archive metadata.
+5. DIVERSIFIED EXPLORATION: Perform at least 3–5 searches using different keywords, \
+synonyms, time periods (date_filter), or specific collections.
+6. SEARCH SCALE: Set max_results to the target count per search_images call.
+7. FINAL RESPONSE: Once you have explored several distinct thematic angles, \
 provide a summary of the collections and search terms used.\
 """
 
@@ -72,19 +80,27 @@ generic collection discovery:
 ## Rules
 1. CORRECT SPELLING: Fix all misspellings from the user prompt before using any \
 keyword (e.g. "astronaunts" → "astronauts", "forrest" → "forest").
-2. ONE THEME PER find_collections CALL: Search one theme at a time. The IA \
-engine treats spaces as AND — combining unrelated topics returns zero results. \
-Within a theme, use OR:
-   CORRECT:   keywords="ghost OR spirit OR haunted"
-   INCORRECT: keywords="ghost sailor forest"
-3. MAP TO CURATED COLLECTIONS: Before calling find_collections for a theme, \
-check whether a curated collection above already covers it. If so, skip \
-discovery and use collection=<identifier> directly in search_images.
-4. CALCULATE YOUR TARGET: Plan for a total candidate pool of 4× max_items. \
+2. ATOMIC DISCOVERY: When calling find_collections, use 1–2 broad keywords that \
+describe the same concept. The IA engine treats multiple unrelated terms as AND, \
+returning near-zero results.
+   CORRECT:   keywords=["ocean", "sea"]
+   INCORRECT: keywords=["ocean", "sailor", "storm"]
+3. MAP TO CURATED COLLECTIONS: Before calling find_collections for a theme, check \
+whether a curated collection above already covers it. If so, skip discovery and use \
+collection=<identifier> directly in search_images.
+4. BROAD SEARCH: When calling search_images, provide a list of synonyms and related \
+terms. The system applies OR logic — every term independently finds results, creating \
+a large candidate pool for the curator to filter.
+   CORRECT:   keywords=["flower", "bloom", "blossom", "petal", "flora"]
+   INCORRECT: keywords=["flower"]
+5. AVOID AESTHETIC TERMS: Do not include words like "vintage", "retro", "beautiful", \
+or "cool" in keywords for curated collections — they rarely appear in original archive \
+metadata.
+6. CALCULATE YOUR TARGET: Plan for a total candidate pool of 4× max_items. \
 Distribute max_results across searches to reach this total.
-5. DIVERSIFY: Cover distinct thematic angles, time periods, collections, and \
+7. DIVERSIFY: Cover distinct thematic angles, time periods, collections, and \
 keyword variations. Do not repeat the same angle twice.
-6. COMPLETE: Once the planned pool reaches approximately 4× max_items, stop \
+8. COMPLETE: Once the planned pool reaches approximately 4× max_items, stop \
 planning and respond with a brief summary of the strategy.\
 """
 
@@ -99,8 +115,12 @@ _TOOLS: list[ToolParam] = [
             "type": "object",
             "properties": {
                 "keywords": {
-                    "type": "string",
-                    "description": "Search keywords for finding collections.",
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": (
+                        "1–2 broad keywords describing a single theme. "
+                        "The system joins them with OR."
+                    ),
                 },
             },
             "required": ["keywords"],
@@ -109,18 +129,20 @@ _TOOLS: list[ToolParam] = [
     {
         "name": "search_images",
         "description": (
-            "Search for images on the Internet Archive. Supports Lucene boolean "
-            "syntax (AND, OR, NOT, groupings) in the keywords field. "
-            "Mediatype:image is automatically enforced."
+            "Search for images on the Internet Archive. "
+            "Provide a list of synonyms or related terms — the system joins them with OR "
+            "to maximise recall. Mediatype:image is automatically enforced."
         ),
         "input_schema": {
             "type": "object",
             "properties": {
                 "keywords": {
-                    "type": "string",
+                    "type": "array",
+                    "items": {"type": "string"},
                     "description": (
-                        "Search keywords using Lucene boolean syntax. "
-                        "E.g. '(botanical OR flora) AND illustration'."
+                        "List of synonyms and related terms. "
+                        "E.g. [\"botanical\", \"flora\", \"illustration\", \"plant\"]. "
+                        "The system joins them with OR."
                     ),
                 },
                 "collection": {
@@ -257,7 +279,7 @@ class InternetArchiveAgent:
         """
         if tool_name == "find_collections":
             logger.debug(
-                "[find_collections] keywords={!r}", tool_input.get("keywords", "")
+                "[find_collections] keywords={!r}", tool_input.get("keywords", [])
             )
             collections = json.loads(result_text)
             if collections:
@@ -273,7 +295,7 @@ class InternetArchiveAgent:
         elif tool_name == "search_images":
             logger.debug(
                 "[search_images] keywords={!r}, collection={}, date_filter={}, max_results={}",
-                tool_input.get("keywords", ""),
+                tool_input.get("keywords", []),
                 tool_input.get("collection"),
                 tool_input.get("date_filter"),
                 tool_input.get("max_results"),

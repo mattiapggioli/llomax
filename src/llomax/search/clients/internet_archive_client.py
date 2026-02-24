@@ -52,6 +52,19 @@ CURATED_COLLECTIONS: list[CuratedCollection] = [
     },
 ]
 
+# Terms that are implicit when searching within a specific curated collection.
+# These are stripped from the keyword list to avoid over-constraining queries.
+_COLLECTION_IMPLICIT_TERMS: dict[str, set[str]] = {
+    "nasa": {"nasa", "space", "astronaut", "astronauts", "rocket", "spacecraft", "satellite"},
+    "flickrcommons": {"flickr"},
+    "smithsonian": {"smithsonian"},
+    "brooklynmuseum": {"brooklyn", "museum"},
+    "library_of_congress": {"library", "congress", "loc"},
+    "biodiversity": {"biodiversity", "biology", "biological"},
+    "metropolitanmuseumofart-gallery": {"metropolitan", "museum", "met"},
+    "coverartarchive": {"cover", "album"},
+}
+
 
 class ImageResult(TypedDict, total=False):
     """A single image result from an Internet Archive search."""
@@ -87,15 +100,17 @@ class InternetArchiveClient:
 
     def search_images(
         self,
-        keywords: str,
+        keywords: list[str],
         collection: str | None = None,
         date_filter: str | None = None,
         max_results: int = 20,
     ) -> list[ImageResult]:
-        """Search for images using Lucene keywords, with optional collection and date filters.
+        """Search for images by keyword list, with optional collection and date filters.
 
         Args:
-            keywords: Lucene boolean keyword expression.
+            keywords: List of search terms joined with OR. Terms implicit to the
+                collection (e.g. "space" for the nasa collection) are stripped
+                automatically to avoid over-constraining the query.
             collection: Optional Internet Archive collection identifier to restrict results.
             date_filter: Optional date range in IA Lucene format, e.g. ``"1900 TO 1950"``.
             max_results: Maximum number of results to return.
@@ -107,7 +122,8 @@ class InternetArchiveClient:
         query = self._build_query(keywords, "image", collection, date_filter)
         logger.debug(
             "[IA] search_images query: {}  url: https://archive.org/advancedsearch.php?q={}",
-            query, urllib.parse.quote(query),
+            query,
+            urllib.parse.quote(query),
         )
         items = itertools.islice(
             internetarchive.search_items(query, fields=IMAGE_FIELDS), max_results
@@ -120,13 +136,14 @@ class InternetArchiveClient:
 
     def find_collections(
         self,
-        keywords: str,
+        keywords: list[str],
         max_results: int = 10,
     ) -> list[CollectionResult]:
         """Search for Internet Archive collections by keyword.
 
         Args:
-            keywords: Search keywords to match collection titles and descriptions.
+            keywords: List of search terms joined with OR to match collection
+                titles and descriptions.
             max_results: Maximum number of results to return.
 
         Returns:
@@ -136,7 +153,8 @@ class InternetArchiveClient:
         query = self._build_query(keywords, "collection")
         logger.debug(
             "[IA] find_collections query: {}  url: https://archive.org/advancedsearch.php?q={}",
-            query, urllib.parse.quote(query),
+            query,
+            urllib.parse.quote(query),
         )
         items = itertools.islice(
             internetarchive.search_items(query, fields=COLLECTION_FIELDS), max_results
@@ -192,23 +210,38 @@ class InternetArchiveClient:
 
     def _build_query(
         self,
-        keywords: str,
+        keywords: list[str],
         mediatype: str,
         collection: str | None = None,
         date_filter: str | None = None,
+        operator: str = "OR",
     ) -> str:
         """Build a Lucene query string with mediatype and optional filters.
 
+        Keywords are joined with ``operator`` (default OR). When ``collection``
+        matches a curated collection, terms implicit to that collection are
+        stripped before joining to avoid over-constraining the query; the
+        original list is used as a fallback if all terms would be stripped.
+
         Args:
-            keywords: Search keywords (Lucene boolean syntax).
+            keywords: List of search terms.
             mediatype: Required mediatype filter (e.g. "image", "collection").
             collection: Optional collection identifier to filter by.
             date_filter: Optional date range (e.g. "1900 TO 1950").
+            operator: Boolean operator used to join keywords (default ``"OR"``).
 
         Returns:
             Formatted Lucene query string.
         """
-        query = f"({keywords}) AND mediatype:{mediatype}"
+        effective = keywords
+        if collection and collection in _COLLECTION_IMPLICIT_TERMS:
+            implicit = _COLLECTION_IMPLICIT_TERMS[collection]
+            cleaned = [k for k in keywords if k.lower() not in implicit]
+            if cleaned:
+                effective = cleaned
+
+        joined = f" {operator} ".join(effective)
+        query = f"({joined}) AND mediatype:{mediatype}"
         if collection:
             query += f" AND collection:{collection}"
         if date_filter:

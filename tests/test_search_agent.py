@@ -24,7 +24,7 @@ class TestInternetArchiveClient:
         with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter([])
             client = InternetArchiveClient()
-            client.search_images(keywords="flowers")
+            client.search_images(keywords=["flowers"])
             call_args = mock_ia.search_items.call_args
             assert "mediatype:image" in call_args[0][0]
 
@@ -32,7 +32,7 @@ class TestInternetArchiveClient:
         with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter([])
             client = InternetArchiveClient()
-            client.search_images(keywords="flowers", collection="nasa")
+            client.search_images(keywords=["flowers"], collection="nasa")
             query = mock_ia.search_items.call_args[0][0]
             assert "collection:nasa" in query
 
@@ -40,7 +40,7 @@ class TestInternetArchiveClient:
         with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter([])
             client = InternetArchiveClient()
-            client.search_images(keywords="flowers", date_filter="1900 TO 1950")
+            client.search_images(keywords=["flowers"], date_filter="1900 TO 1950")
             query = mock_ia.search_items.call_args[0][0]
             assert "date:[1900 TO 1950]" in query
 
@@ -58,7 +58,7 @@ class TestInternetArchiveClient:
                 ]
             )
             client = InternetArchiveClient()
-            results = client.search_images(keywords="sunset")
+            results = client.search_images(keywords=["sunset"])
             assert len(results) == 1
             assert results[0]["identifier"] == "img1"
             assert results[0]["thumbnail_url"] == "https://archive.org/services/img/img1"
@@ -70,15 +70,45 @@ class TestInternetArchiveClient:
                 [{"title": "No ID"}, {"identifier": "ok", "title": "Has ID"}]
             )
             client = InternetArchiveClient()
-            results = client.search_images(keywords="test")
+            results = client.search_images(keywords=["test"])
             assert len(results) == 1
             assert results[0]["identifier"] == "ok"
+
+    def test_search_images_multiple_keywords_uses_or(self):
+        with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
+            mock_ia.search_items.return_value = iter([])
+            client = InternetArchiveClient()
+            client.search_images(keywords=["flower", "bloom", "blossom"])
+            query = mock_ia.search_items.call_args[0][0]
+            assert "flower OR bloom OR blossom" in query
+
+    def test_search_images_strips_implicit_terms_for_curated_collection(self):
+        with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
+            mock_ia.search_items.return_value = iter([])
+            client = InternetArchiveClient()
+            client.search_images(keywords=["astronaut", "space", "moon"], collection="nasa")
+            query = mock_ia.search_items.call_args[0][0]
+            # "space" and "astronaut" are implicit to nasa and should be stripped,
+            # leaving only "moon" in the keyword expression
+            assert "moon" in query
+            assert "space" not in query.split("AND")[0]
+            assert "astronaut" not in query.split("AND")[0]
+
+    def test_search_images_falls_back_if_all_keywords_stripped(self):
+        with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
+            mock_ia.search_items.return_value = iter([])
+            client = InternetArchiveClient()
+            # all three are implicit for nasa
+            client.search_images(keywords=["nasa", "space", "astronaut"], collection="nasa")
+            query = mock_ia.search_items.call_args[0][0]
+            # fallback: original keywords preserved so we still get results
+            assert "nasa" in query or "space" in query or "astronaut" in query
 
     def test_find_collections_forces_mediatype(self):
         with patch("llomax.search.clients.internet_archive_client.internetarchive") as mock_ia:
             mock_ia.search_items.return_value = iter([])
             client = InternetArchiveClient()
-            client.find_collections(keywords="space")
+            client.find_collections(keywords=["space"])
             query = mock_ia.search_items.call_args[0][0]
             assert "mediatype:collection" in query
 
@@ -88,7 +118,7 @@ class TestInternetArchiveClient:
                 [{"identifier": "nasa", "title": "NASA", "description": "NASA images"}]
             )
             client = InternetArchiveClient()
-            results = client.find_collections(keywords="space")
+            results = client.find_collections(keywords=["space"])
             assert len(results) == 1
             assert results[0]["identifier"] == "nasa"
 
@@ -116,7 +146,7 @@ class TestDispatchTool:
             ImageResult(identifier="x", title="X", thumbnail_url="", details_url="")
         ]
         agent = self._make_agent(mock_client)
-        result = agent._dispatch_tool("search_images", {"keywords": "test"})
+        result = agent._dispatch_tool("search_images", {"keywords": ["test"]})
         parsed = json.loads(result)
         assert len(parsed) == 1
         assert parsed[0]["identifier"] == "x"
@@ -125,16 +155,16 @@ class TestDispatchTool:
         mock_client = MagicMock(spec=InternetArchiveClient)
         mock_client.find_collections.return_value = []
         agent = self._make_agent(mock_client)
-        result = agent._dispatch_tool("find_collections", {"keywords": "space"})
+        result = agent._dispatch_tool("find_collections", {"keywords": ["space"]})
         assert json.loads(result) == []
 
     def test_dispatch_search_images_forwards_max_results(self):
         mock_client = MagicMock(spec=InternetArchiveClient)
         mock_client.search_images.return_value = []
         agent = self._make_agent(mock_client)
-        agent._dispatch_tool("search_images", {"keywords": "test", "max_results": 50})
+        agent._dispatch_tool("search_images", {"keywords": ["test"], "max_results": 50})
         mock_client.search_images.assert_called_once_with(
-            keywords="test", collection=None, date_filter=None, max_results=50
+            keywords=["test"], collection=None, date_filter=None, max_results=50
         )
 
     def test_dispatch_unknown_tool(self):
@@ -188,7 +218,7 @@ class TestInternetArchiveAgent:
         mock_anthropic.messages.create = AsyncMock(
             side_effect=[
                 _make_tool_use_response(
-                    [{"id": "t1", "name": "search_images", "input": {"keywords": "test"}}]
+                    [{"id": "t1", "name": "search_images", "input": {"keywords": ["test"]}}]
                 ),
                 _make_end_turn_response(),
             ]
@@ -220,10 +250,10 @@ class TestInternetArchiveAgent:
         mock_anthropic.messages.create = AsyncMock(
             side_effect=[
                 _make_tool_use_response(
-                    [{"id": "t1", "name": "search_images", "input": {"keywords": "q1"}}]
+                    [{"id": "t1", "name": "search_images", "input": {"keywords": ["q1"]}}]
                 ),
                 _make_tool_use_response(
-                    [{"id": "t2", "name": "search_images", "input": {"keywords": "q2"}}]
+                    [{"id": "t2", "name": "search_images", "input": {"keywords": ["q2"]}}]
                 ),
                 _make_end_turn_response(),
             ]
@@ -247,7 +277,7 @@ class TestInternetArchiveAgent:
         mock_anthropic = AsyncMock()
         mock_anthropic.messages.create = AsyncMock(
             return_value=_make_tool_use_response(
-                [{"id": "t1", "name": "search_images", "input": {"keywords": "loop"}}]
+                [{"id": "t1", "name": "search_images", "input": {"keywords": ["loop"]}}]
             )
         )
 
