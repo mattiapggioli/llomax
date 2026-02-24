@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -50,9 +51,12 @@ class Fragment:
         bounding_box: ``(x1, y1, x2, y2)`` pixel coordinates of the
             segment within the source image.
         label: Short entity label for the segment (e.g. ``"person"``,
-            ``"object"``). Populated by the annotation stage.
+            ``"object"``). Populated by the segmentation stage.
         description: Free-text description of the segment content.
             Populated by the annotation stage.
+        fragment_id: UUID string that uniquely identifies this fragment
+            across the full candidate pool, used by the curator to select
+            individual segments rather than entire source images.
     """
 
     source_id: str
@@ -60,6 +64,7 @@ class Fragment:
     bounding_box: tuple[int, int, int, int]
     label: str = "unknown"
     description: str = ""
+    fragment_id: str = field(default_factory=lambda: str(uuid.uuid4()))
 
 
 @dataclass

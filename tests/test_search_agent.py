@@ -8,9 +8,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 from PIL import Image
 
-from llomax.models import SourceImage
+from llomax.models import Fragment, SourceImage
 from llomax.search.clients.internet_archive_client import ImageResult, InternetArchiveClient
-from llomax.search.curator import select_sources
+from llomax.search.curator import select_fragments
 from llomax.search.internet_archive_agent import MAX_AGENT_TURNS, InternetArchiveAgent
 from llomax.search.thumbnails import download_thumbnails
 
@@ -284,120 +284,101 @@ def _make_source(external_id: str, title: str = "") -> SourceImage:
     )
 
 
+def _make_fragment(source_id: str, label: str = "object", w: int = 50, h: int = 50) -> Fragment:
+    from PIL import Image as PILImage
+
+    return Fragment(
+        source_id=source_id,
+        image_rgba=PILImage.new("RGBA", (w, h)),
+        bounding_box=(0, 0, w, h),
+        label=label,
+    )
+
+
+def _mock_curator_response(text: str):
+    text_block = MagicMock()
+    text_block.type = "text"
+    text_block.text = text
+    response = MagicMock()
+    response.content = [text_block]
+    client = AsyncMock()
+    client.messages.create = AsyncMock(return_value=response)
+    return client
+
+
 class TestCurator:
-    async def test_selects_identifiers(self):
-        mock_response = MagicMock()
-        text_block = MagicMock()
-        text_block.type = "text"
-        text_block.text = '["id1", "id3"]'
-        mock_response.content = [text_block]
+    async def test_returns_fragment_ids(self):
+        frag1 = _make_fragment("src1")
+        frag2 = _make_fragment("src2")
+        mock_client = _mock_curator_response(json.dumps([frag1.fragment_id, frag2.fragment_id]))
 
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        sources = [_make_source("src1"), _make_source("src2")]
+        selected = await select_fragments("prompt", sources, [frag1, frag2], mock_client)
+        assert selected == [frag1.fragment_id, frag2.fragment_id]
 
-        candidates = [_make_source("id1"), _make_source("id2"), _make_source("id3")]
-        selected = await select_sources("prompt", candidates, {}, mock_client)
-        assert selected == ["id1", "id3"]
+    async def test_can_select_subset_of_fragments_from_same_source(self):
+        frag1 = _make_fragment("src1", label="person")
+        frag2 = _make_fragment("src1", label="car")
+        frag3 = _make_fragment("src1", label="tree")
+        mock_client = _mock_curator_response(json.dumps([frag1.fragment_id, frag3.fragment_id]))
+
+        sources = [_make_source("src1")]
+        selected = await select_fragments("prompt", sources, [frag1, frag2, frag3], mock_client)
+        assert frag1.fragment_id in selected
+        assert frag3.fragment_id in selected
+        assert frag2.fragment_id not in selected
 
     async def test_handles_markdown_fenced_json(self):
-        mock_response = MagicMock()
-        text_block = MagicMock()
-        text_block.type = "text"
-        text_block.text = '```json\n["id1"]\n```'
-        mock_response.content = [text_block]
+        frag = _make_fragment("src1")
+        mock_client = _mock_curator_response(f'```json\n["{frag.fragment_id}"]\n```')
 
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
-
-        selected = await select_sources("prompt", [], {}, mock_client)
-        assert selected == ["id1"]
+        selected = await select_fragments("prompt", [], [frag], mock_client)
+        assert selected == [frag.fragment_id]
 
     async def test_handles_non_list_response(self):
-        mock_response = MagicMock()
-        text_block = MagicMock()
-        text_block.type = "text"
-        text_block.text = '{"not": "a list"}'
-        mock_response.content = [text_block]
-
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
-
-        selected = await select_sources("prompt", [], {}, mock_client)
+        mock_client = _mock_curator_response('{"not": "a list"}')
+        selected = await select_fragments("prompt", [], [], mock_client)
         assert selected == []
 
     async def test_respects_max_fragments(self):
-        mock_response = MagicMock()
-        text_block = MagicMock()
-        text_block.type = "text"
-        text_block.text = '["id1", "id2"]'
-        mock_response.content = [text_block]
+        frag = _make_fragment("src1")
+        mock_client = _mock_curator_response(json.dumps([frag.fragment_id]))
 
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        sources = [_make_source("src1")]
+        await select_fragments("prompt", sources, [frag], mock_client, max_fragments=7)
 
-        candidates = [_make_source("id1"), _make_source("id2")]
-        selected = await select_sources("prompt", candidates, {}, mock_client, max_fragments=5)
-        assert selected == ["id1", "id2"]
         user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
-        assert "5" in user_msg
+        assert "7" in user_msg
 
     async def test_filters_non_string_items(self):
-        mock_response = MagicMock()
-        text_block = MagicMock()
-        text_block.type = "text"
-        text_block.text = '["id1", 42, "id2", null]'
-        mock_response.content = [text_block]
+        frag = _make_fragment("src1")
+        mixed = json.dumps([frag.fragment_id, 42, None])
+        mock_client = _mock_curator_response(mixed)
 
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
+        selected = await select_fragments("prompt", [], [frag], mock_client)
+        assert selected == [frag.fragment_id]
 
-        selected = await select_sources("prompt", [], {}, mock_client)
-        assert selected == ["id1", "id2"]
+    async def test_fragment_summary_includes_label_and_dimensions(self):
+        frag = _make_fragment("src1", label="person", w=120, h=200)
+        mock_client = _mock_curator_response("[]")
 
-    async def test_candidate_summaries_sent_to_llm(self):
-        mock_response = MagicMock()
-        text_block = MagicMock()
-        text_block.type = "text"
-        text_block.text = "[]"
-        mock_response.content = [text_block]
-
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
-
-        candidates = [_make_source("img1", title="A Fine Painting")]
-        await select_sources("prompt", candidates, {}, mock_client)
-
-        user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
-        assert "img1" in user_msg
-        assert "A Fine Painting" in user_msg
-        assert "fragment_count" in user_msg
-
-    async def test_fragment_labels_included_in_summary(self):
-        from PIL import Image as PILImage
-
-        from llomax.models import Fragment
-
-        mock_response = MagicMock()
-        text_block = MagicMock()
-        text_block.type = "text"
-        text_block.text = "[]"
-        mock_response.content = [text_block]
-
-        mock_client = AsyncMock()
-        mock_client.messages.create = AsyncMock(return_value=mock_response)
-
-        fragment = Fragment(
-            source_id="img1",
-            image_rgba=PILImage.new("RGBA", (10, 10)),
-            bounding_box=(0, 0, 10, 10),
-            label="person",
-        )
-        candidates = [_make_source("img1")]
-        await select_sources("prompt", candidates, {"img1": [fragment]}, mock_client)
+        await select_fragments("prompt", [_make_source("src1")], [frag], mock_client)
 
         user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
         assert "person" in user_msg
-        assert "fragment_count" in user_msg
+        assert "120" in user_msg
+        assert "200" in user_msg
+        assert frag.fragment_id in user_msg
+
+    async def test_fragment_summary_includes_source_context(self):
+        frag = _make_fragment("src1")
+        mock_client = _mock_curator_response("[]")
+
+        await select_fragments("prompt", [_make_source("src1", title="Galaxy Photo")], [frag], mock_client)
+
+        user_msg = mock_client.messages.create.call_args.kwargs["messages"][0]["content"]
+        assert "Galaxy Photo" in user_msg
+        assert "src1" in user_msg
 
 
 # ---------------------------------------------------------------------------

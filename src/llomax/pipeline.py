@@ -14,7 +14,7 @@ from llomax.composition.composer import compose as default_compose
 from llomax.models import CollageOutput, Fragment, SourceImage
 from llomax.output import save_run
 from llomax.search.clients.internet_archive_client import ImageResult
-from llomax.search.curator import select_sources
+from llomax.search.curator import select_fragments
 from llomax.search.internet_archive_agent import InternetArchiveAgent
 from llomax.search.thumbnails import download_thumbnails
 
@@ -156,27 +156,29 @@ class Pipeline:
         for label, count in sorted(label_counts.items(), key=lambda kv: -kv[1]):
             logger.debug("  {!r}: {} fragment(s)", label, count)
 
-        # Stage 5: Select sources based on metadata and detected fragment content.
+        # Stage 5: Curator picks individual fragments from the full pool.
         logger.info(
-            "Stage 5 — Curating: selecting sources to yield ~{} fragment(s) from {} candidate(s)...",
-            max_items, len(source_candidates),
+            "Stage 5 — Curating: selecting ~{} fragment(s) from {} available...",
+            max_items, len(all_fragments),
         )
-        selected_ids = await select_sources(
-            prompt, source_candidates, fragments_by_source, self.anthropic_client,
+        selected_fragment_ids = await select_fragments(
+            prompt, source_candidates, all_fragments, self.anthropic_client,
             max_fragments=max_items,
         )
-        selected_set = set(selected_ids)
-        selected_sources = [s for s in source_candidates if s.external_id in selected_set]
-        fragments: list[Fragment] = [
-            f for sid in selected_ids for f in fragments_by_source.get(sid, [])
-        ]
+        selected_id_set = set(selected_fragment_ids)
+        fragments: list[Fragment] = [f for f in all_fragments if f.fragment_id in selected_id_set]
+        selected_source_ids = {f.source_id for f in fragments}
+        selected_sources = [s for s in source_candidates if s.external_id in selected_source_ids]
         logger.info(
-            "Stage 5 complete — {} source(s) selected, {} fragment(s) for composition.",
-            len(selected_sources), len(fragments),
+            "Stage 5 complete — {} fragment(s) selected from {} source(s).",
+            len(fragments), len(selected_sources),
         )
+        source_frag_counts = {sid: 0 for sid in selected_source_ids}
+        for f in fragments:
+            source_frag_counts[f.source_id] += 1
         for src in selected_sources:
-            n = len(fragments_by_source.get(src.external_id, []))
-            logger.debug("  Selected: {} ({} fragment(s)) — {!r}", src.external_id, n, src.title)
+            n = source_frag_counts[src.external_id]
+            logger.debug("  {} fragment(s) from {} — {!r}", n, src.external_id, src.title)
 
         # Stage 6: Annotate fragments with placeholder labels and descriptions.
         logger.info("Stage 6 — Annotating {} fragment(s)...", len(fragments))

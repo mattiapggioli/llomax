@@ -9,61 +9,62 @@ from llomax.models import Fragment, SourceImage
 _CURATOR_MODEL = "claude-sonnet-4-5-20250929"
 
 _SYSTEM_PROMPT = """\
-You are an art curator selecting source images for a collage. Each candidate has \
-been pre-segmented — you can see how many visual elements (fragments) were detected \
-and their types. Select sources based on:
+You are an art curator selecting individual visual fragments for a collage. Each \
+fragment is a segment extracted from an Internet Archive source image — you may \
+select any subset from any source, mixing fragments freely across sources.
 
-1. **Relevance** — prefer sources whose detected fragment types match the creative prompt.
-2. **Fragment quality** — prefer sources that yielded meaningful, clearly-labelled \
-fragments. Sources with zero fragments contribute nothing to the collage and should \
-generally be avoided.
-3. **Visual diversity** — prefer a mix of fragment types, subjects, eras, and creators.
-4. **Target count** — aim to select sources whose combined fragment count is close \
-to the requested target.
+Select fragments based on:
 
-Return ONLY a JSON array of selected external_id strings. No explanation, no \
+1. **Relevance** — prefer fragments whose label and source title match the creative prompt.
+2. **Diversity** — draw from a variety of sources, labels, and visual types.
+3. **Size** — prefer fragments with meaningful dimensions; very small ones rarely \
+compose well.
+4. **Target count** — select approximately the requested number of fragments in total.
+
+Return ONLY a JSON array of selected fragment_id strings. No explanation, no \
 markdown fences, just the raw JSON array. \
-Example: ["img1", "img2"]\
+Example: ["id1", "id2"]\
 """
 
 
-async def select_sources(
+async def select_fragments(
     prompt: str,
-    candidates: list[SourceImage],
-    fragments_by_source: dict[str, list[Fragment]],
+    sources: list[SourceImage],
+    fragments: list[Fragment],
     anthropic_client: anthropic.AsyncAnthropic,
     max_fragments: int = 20,
 ) -> list[str]:
-    """Select the best source image candidates for the collage via a single LLM call.
+    """Select individual fragments for the collage via a single LLM call.
 
-    Each candidate summary includes pre-segmentation results so the model can
-    select based on actual detected fragment types and counts rather than
-    metadata alone.
+    The curator receives a compact summary of every available fragment —
+    including its detected label, pixel dimensions, and parent source context —
+    and returns the ``fragment_id`` strings of the chosen subset. Fragments
+    from different sources can be mixed freely.
 
     Args:
         prompt: The user's creative prompt.
-        candidates: Available source images as ``SourceImage`` objects.
-        fragments_by_source: Mapping of ``external_id`` to the fragments
-            already extracted from each source image.
+        sources: All source images, used to attach title and metadata to
+            each fragment summary.
+        fragments: All extracted fragments across the full candidate pool.
         anthropic_client: Anthropic async client instance.
-        max_fragments: Target total number of fragments to collect across
-            all selected sources.
+        max_fragments: Target number of fragments to select for composition.
 
     Returns:
-        List of selected ``external_id`` strings.
+        List of selected ``fragment_id`` strings.
     """
-    summaries = [_source_summary(s, fragments_by_source.get(s.external_id, [])) for s in candidates]
+    source_map = {s.external_id: s for s in sources}
+    summaries = [_fragment_summary(f, source_map.get(f.source_id)) for f in fragments]
 
     user_message = (
         f"Creative prompt: {prompt}\n\n"
         f"Target fragment count: ~{max_fragments}\n\n"
-        f"Candidates (with pre-segmentation results):\n\n"
+        f"Available fragments:\n\n"
         + json.dumps(summaries, indent=2)
     )
 
     response = await anthropic_client.messages.create(
         model=_CURATOR_MODEL,
-        max_tokens=1024,
+        max_tokens=2048,
         system=_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_message}],
     )
@@ -72,28 +73,29 @@ async def select_sources(
     return _parse_identifiers(text)
 
 
-def _source_summary(source: SourceImage, fragments: list[Fragment]) -> dict:
-    """Build the curator summary dict for a single source and its fragments.
+def _fragment_summary(fragment: Fragment, source: SourceImage | None) -> dict:
+    """Build a compact curator summary for a single fragment.
 
     Args:
-        source: The source image whose metadata to include.
-        fragments: Fragments already extracted from this source.
+        fragment: The fragment to summarise.
+        source: Parent ``SourceImage`` for title and metadata context,
+            or ``None`` if the source is no longer in the candidate list.
 
     Returns:
-        Dict with metadata fields plus ``fragment_count`` and
-        ``fragment_labels`` (label → count mapping).
+        Dict with ``fragment_id``, ``label``, pixel dimensions, and
+        parent source fields (``source_id``, ``source_title``,
+        ``source_year``, ``source_creator``).
     """
-    label_counts: dict[str, int] = {}
-    for f in fragments:
-        label_counts[f.label] = label_counts.get(f.label, 0) + 1
+    x1, y1, x2, y2 = fragment.bounding_box
     return {
-        "external_id": source.external_id,
-        "title": source.title,
-        "description": source.description[:200] if source.description else "",
-        "year": source.metadata.get("year", ""),
-        "creator": source.metadata.get("creator", ""),
-        "fragment_count": len(fragments),
-        "fragment_labels": label_counts,
+        "fragment_id": fragment.fragment_id,
+        "label": fragment.label,
+        "width": x2 - x1,
+        "height": y2 - y1,
+        "source_id": fragment.source_id,
+        "source_title": source.title if source else "",
+        "source_year": source.metadata.get("year", "") if source else "",
+        "source_creator": source.metadata.get("creator", "") if source else "",
     }
 
 
