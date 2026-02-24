@@ -7,10 +7,12 @@ from typing import Callable
 
 import anthropic
 from loguru import logger
+from PIL import Image
 
 from llomax.analysis.annotator import PlaceholderAnnotator
 from llomax.analysis.client import AnalysisClient
 from llomax.composition.composer import compose as default_compose
+from llomax.core.hooks import HookManager, PipelineState
 from llomax.models import CollageOutput, Fragment, SourceImage
 from llomax.output import save_run
 from llomax.search.clients.internet_archive_client import ImageResult
@@ -30,8 +32,9 @@ class Pipeline:
         anthropic_client: anthropic.AsyncAnthropic | None = None,
         thumbnails_dir: Path | str = Path("output/thumbnails"),
         compose_fn: Callable[
-            [list[Fragment], tuple[int, int]], CollageOutput
+            [list[Fragment], tuple[int, int], Image.Image | None], CollageOutput
         ] = default_compose,
+        hooks: HookManager | None = None,
     ) -> None:
         """Initialize the pipeline.
 
@@ -46,7 +49,11 @@ class Pipeline:
             anthropic_client: Anthropic async client for the source-selection
                 stage. Defaults to the search agent's client.
             thumbnails_dir: Directory for cached thumbnail files.
-            compose_fn: Callable that arranges fragments onto a canvas.
+            compose_fn: Callable that arranges fragments onto a canvas with an
+                optional background image.
+            hooks: Hook manager for registering ``after_curation``,
+                ``pre_composition``, and ``composition_strategy`` hooks.
+                A default empty manager is used when not provided.
         """
         self.search_agent = search_agent
         self.analysis_client = analysis_client
@@ -54,6 +61,7 @@ class Pipeline:
         self.anthropic_client = anthropic_client or search_agent.client
         self.thumbnails_dir = Path(thumbnails_dir)
         self.compose_fn = compose_fn
+        self.hooks = hooks or HookManager()
 
     async def run(
         self,
@@ -180,17 +188,48 @@ class Pipeline:
             n = source_frag_counts[src.external_id]
             logger.debug("  {} fragment(s) from {} — {!r}", n, src.external_id, src.title)
 
+        # Build shared pipeline state for hook points.
+        state = PipelineState(
+            prompt=prompt,
+            canvas_size=canvas_size,
+            sources=selected_sources,
+            fragments=fragments,
+        )
+
+        # Hook: after_curation — hooks may flag a background source.
+        await self.hooks.run("after_curation", state)
+        if state.background_source_id:
+            bg_src = next(
+                (s for s in state.sources if s.external_id == state.background_source_id),
+                None,
+            )
+            if bg_src and (bg_img := bg_src.load_image()):
+                state.background_image = bg_img
+                logger.info(
+                    "Hooks — background set to {!r} ({}).",
+                    bg_src.title,
+                    state.background_source_id,
+                )
+
         # Stage 6: Annotate fragments with placeholder labels and descriptions.
-        logger.info("Stage 6 — Annotating {} fragment(s)...", len(fragments))
-        self.annotator.annotate(selected_sources, fragments)
+        logger.info("Stage 6 — Annotating {} fragment(s)...", len(state.fragments))
+        self.annotator.annotate(state.sources, state.fragments)
         logger.info("Stage 6 complete — fragments annotated.")
 
-        # Stage 7: Compose collage.
+        # Hook: pre_composition — hooks may apply palette or other transforms.
+        await self.hooks.run("pre_composition", state)
+
+        # Stage 7: Compose collage — use composition_strategy override if registered.
         logger.info(
             "Stage 7 — Composing collage: {} fragment(s) onto {}×{} canvas...",
-            len(fragments), canvas_size[0], canvas_size[1],
+            len(state.fragments), canvas_size[0], canvas_size[1],
         )
-        collage = self.compose_fn(fragments, canvas_size)
+        composition_override = self.hooks.get_override("composition_strategy")
+        if composition_override is not None:
+            logger.info("Hooks — using composition_strategy override.")
+            collage = await composition_override(state)
+        else:
+            collage = self.compose_fn(state.fragments, canvas_size, state.background_image)
         logger.info(
             "Stage 7 complete — collage composed ({} fragment(s) placed).",
             len(collage.fragment_provenance),
