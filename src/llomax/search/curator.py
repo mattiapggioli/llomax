@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 import anthropic
+from loguru import logger
 
 from llomax.models import Fragment, SourceImage
 
@@ -61,6 +62,8 @@ async def select_fragments(
         f"Available fragments:\n\n"
         + json.dumps(summaries, indent=2)
     )
+
+    logger.debug("[curator report]\n{}", user_message)
 
     response = await anthropic_client.messages.create(
         model=_CURATOR_MODEL,
