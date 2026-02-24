@@ -32,7 +32,7 @@ llomax is an LLM-driven pipeline that turns a text prompt into an artistic colla
                        ▼
 ┌─────────────────────────────────────────┐
 │  4. SEGMENT                             │
-│     SAM  (OpenVINO / CPU fallback)      │
+│     SAM (OpenVINO / CPU) or YOLO-seg    │
 │     one RGBA Fragment per mask          │
 └──────────────────────┬──────────────────┘
                        │ Fragment pool
@@ -43,6 +43,9 @@ llomax is an LLM-driven pipeline that turns a text prompt into an artistic colla
 │     selects fragment_id subset          │
 └──────────────────────┬──────────────────┘
                        │ selected Fragments
+                ┌──────┴──────┐
+                │ after_curation hook point
+                └──────┬──────┘
                        ▼
 ┌─────────────────────────────────────────┐
 │  6. ANNOTATE                            │
@@ -50,10 +53,14 @@ llomax is an LLM-driven pipeline that turns a text prompt into an artistic colla
 │     label + description per fragment    │
 └──────────────────────┬──────────────────┘
                        │
+                ┌──────┴──────┐
+                │ pre_composition hook point
+                └──────┬──────┘
                        ▼
 ┌─────────────────────────────────────────┐
 │  7. COMPOSE                             │
 │     PIL alpha-composite → RGB canvas    │
+│     (or composition_strategy override)  │
 └──────────────────────┬──────────────────┘
                        │
                        ▼
@@ -68,7 +75,7 @@ llomax is an LLM-driven pipeline that turns a text prompt into an artistic colla
 - Python >= 3.11
 - [uv](https://docs.astral.sh/uv/)
 - An [Anthropic API key](https://console.anthropic.com/)
-- A SAM model checkpoint (required for real segmentation; not needed when using the placeholder client)
+- A SAM model checkpoint (required for SAM segmentation; not needed for the placeholder or YOLO clients)
 
 ## Setup
 
@@ -91,7 +98,7 @@ OUTPUT_DIR=output          # optional, defaults to ./output
 
 ### SAM model checkpoint (optional)
 
-To use real SAM segmentation instead of the placeholder client, download a checkpoint:
+To use SAM segmentation, download a checkpoint:
 
 ```bash
 # ViT-B (fastest, ~375 MB) — recommended for the Intel Core Ultra 7 155H
@@ -130,13 +137,14 @@ OUTPUT_DIR=/tmp/collages uv run llomax "Soviet constructivist propaganda"
 Output is written to `OUTPUT_DIR/{YYYY-MM-DD_HH-MM-SS}/`:
 - `collage.png` — the composed image
 - `metadata.json` — prompt, sources, per-fragment provenance
+- `pipeline.log` — full debug log of the run
 
 ### Python API
 
 ```python
 import asyncio
 from llomax import Pipeline
-from llomax.analysis.client import PlaceholderAnalysisClient  # no checkpoint needed
+from llomax.analysis.client import PlaceholderAnalysisClient
 from llomax.search.internet_archive_agent import InternetArchiveAgent
 
 async def main():
@@ -154,47 +162,162 @@ async def main():
 asyncio.run(main())
 ```
 
-To use SAM segmentation, swap in `Segmenter`:
+**Analysis client options:**
 
 ```python
+# SAM segmentation (requires checkpoint)
 from llomax.analysis.segmenter import Segmenter
 
-pipeline = Pipeline(
-    search_agent=InternetArchiveAgent(),
-    analysis_client=Segmenter(
-        checkpoint_path="sam_vit_b_01ec64.pth",
-        model_type="vit_b",
-        device="AUTO",       # AUTO lets OpenVINO pick GPU/NPU; use "CPU" to force CPU
-    ),
+analysis_client = Segmenter(
+    checkpoint_path="sam_vit_b_01ec64.pth",
+    model_type="vit_b",
+    device="AUTO",   # AUTO lets OpenVINO pick GPU/NPU; use "CPU" to force CPU
 )
+
+# YOLO instance segmentation (requires ultralytics and a -seg model)
+from llomax.analysis.yolo_client import YoloAnalysisClient
+
+analysis_client = YoloAnalysisClient(model_name="yolo11n-seg.pt")
+
+# Placeholder — no model required, full-frame fragment per source
+from llomax.analysis.client import PlaceholderAnalysisClient
+
+analysis_client = PlaceholderAnalysisClient()
 ```
+
+## Customizing the Pipeline
+
+The pipeline exposes three extension points via `HookManager`. Hooks receive a `PipelineState` object with:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `prompt` | `str` | Original user prompt |
+| `canvas_size` | `tuple[int, int]` | Canvas dimensions in pixels |
+| `sources` | `list[SourceImage]` | Curated source images |
+| `fragments` | `list[Fragment]` | Selected fragments |
+| `background_source_id` | `str \| None` | Source flagged as background (set by hooks) |
+| `background_image` | `Image \| None` | Loaded background PIL image (set by pipeline) |
+
+**Hook points:**
+
+| Point | Runs | Type |
+|-------|------|------|
+| `after_curation` | After fragment curation, before annotation | Additive — mutates `PipelineState` |
+| `pre_composition` | After annotation, before composition | Additive — mutates `PipelineState` |
+| `composition_strategy` | Replaces the default random composer | Override — returns `CollageOutput` |
+
+### Built-in hooks
+
+| Hook | Import | Hook point | Effect |
+|------|--------|------------|--------|
+| `select_best_background(client)` | `llomax.hooks` | `after_curation` | LLM picks one source as the canvas background |
+| `color_grade(mode)` | `llomax.hooks` | `pre_composition` | Applies a colour style to all fragments and the background |
+| `llm_compose(client)` | `llomax.hooks` | `composition_strategy` | LLM places each fragment with x/y/scale and artistic reasoning |
+
+`color_grade` modes: `"pastel"` · `"vivid"` · `"vintage"` · `"faded"`
+
+### Example: full hook setup
+
+```python
+import asyncio
+import anthropic
+from llomax import Pipeline
+from llomax.core.hooks import HookManager
+from llomax.hooks import color_grade, llm_compose, select_best_background
+from llomax.search.internet_archive_agent import InternetArchiveAgent
+from llomax.analysis.client import PlaceholderAnalysisClient
+
+async def main():
+    client = anthropic.AsyncAnthropic()
+    hooks = HookManager()
+
+    # Pick an atmospheric image from the curated pool as canvas background
+    hooks.register("after_curation", select_best_background(client))
+
+    # Shift all fragments and background to a unified sepia palette
+    hooks.register("pre_composition", color_grade("vintage"))
+
+    # Let Claude place fragments instead of random placement
+    hooks.register_override("composition_strategy", llm_compose(client))
+
+    pipeline = Pipeline(
+        search_agent=InternetArchiveAgent(),
+        analysis_client=PlaceholderAnalysisClient(),
+        hooks=hooks,
+    )
+    collage = await pipeline.run("Soviet constructivist propaganda")
+    collage.image.show()
+
+asyncio.run(main())
+```
+
+### Writing a custom hook
+
+Additive hooks receive and mutate `PipelineState`:
+
+```python
+from llomax.core.hooks import PipelineState
+
+async def drop_small_fragments(state: PipelineState) -> None:
+    state.fragments = [
+        f for f in state.fragments
+        if (f.bounding_box[2] - f.bounding_box[0]) > 100
+    ]
+
+hooks.register("after_curation", drop_small_fragments)
+```
+
+Override hooks replace the composition stage entirely and return a `CollageOutput`:
+
+```python
+from llomax.models import CollageOutput
+from PIL import Image
+
+async def tiled_compose(state: PipelineState) -> CollageOutput:
+    canvas_w, canvas_h = state.canvas_size
+    canvas = Image.new("RGB", (canvas_w, canvas_h), (255, 255, 255))
+    # ... custom tiling logic ...
+    return CollageOutput(image=canvas, width=canvas_w, height=canvas_h, fragment_provenance=[])
+
+hooks.register_override("composition_strategy", tiled_compose)
+```
+
+Multiple additive hooks on the same point run in registration order. Only the last `register_override` call for a point takes effect.
 
 ## Development
 
 ```bash
-uv run pytest tests/ -v         # Run all tests
-uv run ruff check src/ tests/   # Lint
-uv run ruff format src/ tests/  # Format
+uv run pytest tests/ -v              # Run all tests
+uv run pytest tests/test_hooks.py -v # Run a single test file
+uv run pytest tests/ -k "test_name"  # Run a specific test by name
+uv run ruff check src/ tests/        # Lint
+uv run ruff format src/ tests/       # Format
 ```
 
 ## Project Structure
 
 ```
 src/llomax/
-├── models.py          # SourceImage, Fragment, CollageOutput
-├── output.py          # Save collage and metadata to timestamped directories
-├── pipeline.py        # Five-stage pipeline orchestrator
-├── search/            # Stage 1 & 2: discovery and source selection
-│   ├── internet_archive_agent.py   # InternetArchiveAgent (multi-turn agent loop)
+├── models.py               # SourceImage, Fragment, CollageOutput
+├── output.py               # Save collage and metadata to timestamped directories
+├── pipeline.py             # Pipeline orchestrator (8 stages + 3 hook points)
+├── core/
+│   └── hooks.py            # HookManager, PipelineState
+├── hooks/                  # Built-in hook implementations
+│   ├── background.py       # select_best_background
+│   ├── palette.py          # color_grade
+│   └── llm_composer.py     # llm_compose
+├── search/                 # Stages 1–2: discovery and curation
+│   ├── internet_archive_agent.py   # InternetArchiveAgent (multi-turn LLM loop)
 │   ├── clients/
-│   │   └── internet_archive_client.py  # InternetArchiveClient
-│   ├── curator.py                  # select_sources() via Claude API
-│   └── thumbnails.py               # Async thumbnail downloader (saves to disk)
-├── analysis/          # Stage 3 & 4: segmentation and annotation
-│   ├── segmenter.py   # Segmenter — SAM + OpenVINO (Intel Arc GPU/NPU)
-│   ├── annotator.py   # PlaceholderAnnotator — double-analysis structure
-│   └── client.py      # AnalysisClient protocol + PlaceholderAnalysisClient
-└── composition/       # Stage 5: collage assembly
-    └── composer.py    # RGBA alpha-composite composer
+│   │   └── internet_archive_client.py  # InternetArchiveClient (Lucene queries)
+│   ├── curator.py          # select_fragments() — LLM fragment picker
+│   └── thumbnails.py       # Async thumbnail downloader
+├── analysis/               # Stages 4–5: segmentation and annotation
+│   ├── segmenter.py        # Segmenter — SAM + OpenVINO (Intel Arc GPU/NPU)
+│   ├── yolo_client.py      # YoloAnalysisClient — YOLO instance segmentation
+│   ├── annotator.py        # PlaceholderAnnotator
+│   └── client.py           # AnalysisClient protocol + PlaceholderAnalysisClient
+└── composition/            # Stage 7: default random composer
+    └── composer.py         # RGBA alpha-composite, random placement
 ```
-

@@ -29,10 +29,28 @@ InternetArchiveAgent.plan_search(prompt)   # LLM registers search intents (no ex
   → download_thumbnails(sources)           # save to cache_dir/{id}.jpg
   → AnalysisClient.analyze(sources)        # segmentation → Fragments
   → select_fragments(fragments)            # LLM curator picks individual Fragments
+  ── after_curation hooks ──
   → PlaceholderAnnotator.annotate()        # label + describe each Fragment
+  ── pre_composition hooks ──
   → compose(fragments, canvas_size)        # RGBA alpha-composite onto canvas
+                                           # (or composition_strategy override)
   → save_run(collage, ...)                 # write collage.png + metadata.json
 ```
+
+### Hook architecture (`src/llomax/core/hooks.py`, `src/llomax/hooks/`)
+
+`HookManager` manages two kinds of extensions:
+- **Additive hooks** (`register`) — async callables that receive and mutate `PipelineState`. Multiple hooks on the same point run in registration order.
+- **Override hooks** (`register_override`) — replace the pipeline's default at that point. Last registration wins. Used for `composition_strategy`.
+
+`PipelineState` fields: `prompt`, `canvas_size`, `sources`, `fragments`, `background_source_id`, `background_image`.
+
+Three built-in hook factories in `src/llomax/hooks/`:
+- **`select_best_background(client)`** (`background.py`) — `after_curation`. LLM picks one source as canvas background; sets `state.background_source_id`. Text-only, no Vision API.
+- **`color_grade(mode)`** (`palette.py`) — `pre_composition`. Applies pastel/vivid/vintage/faded PIL transforms to all fragments and background. Preserves RGBA alpha.
+- **`llm_compose(client)`** (`llm_composer.py`) — `composition_strategy` override. LLM returns `{fragment_id: {x, y, scale, reason}}`; falls back to random on failure.
+
+All built-in hooks use `claude-haiku-4-5-20251001`.
 
 ### Stage 1: Discovery (`src/llomax/search/`)
 
@@ -56,6 +74,7 @@ Supporting files:
 `AnalysisClient` is a `Protocol` with a single async method `analyze(sources) -> list[Fragment]`.
 
 - **`Segmenter`** (`segmenter.py`) — SAM `AutomaticMaskGenerator` backend. On first use it exports the SAM image encoder (ViT) to OpenVINO IR and compiles it with `device_name="AUTO"` to target the Intel Arc GPU or NPU. Falls back to PyTorch CPU if OpenVINO is unavailable. Each mask becomes a `Fragment` with a transparent RGBA background.
+- **`YoloAnalysisClient`** (`yolo_client.py`) — ultralytics `-seg` model backend. Runs instance segmentation; each detected instance becomes a `Fragment` with a masked RGBA crop.
 - **`PlaceholderAnalysisClient`** (`client.py`) — Passthrough: wraps each source image as a single full-frame `Fragment`. No model required; use for testing the pipeline end-to-end.
 
 ### Stage 4: Annotation (`src/llomax/analysis/annotator.py`)
