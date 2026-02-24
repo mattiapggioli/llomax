@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Callable
@@ -158,10 +159,8 @@ class Pipeline:
             "Stage 4 complete — {} fragment(s) extracted from {}/{} candidate(s).",
             len(all_fragments), sources_with_fragments, len(source_candidates),
         )
-        label_counts: dict[str, int] = {}
-        for f in all_fragments:
-            label_counts[f.label] = label_counts.get(f.label, 0) + 1
-        for label, count in sorted(label_counts.items(), key=lambda kv: -kv[1]):
+        label_counts = Counter(f.label for f in all_fragments)
+        for label, count in label_counts.most_common():
             logger.debug("  {!r}: {} fragment(s)", label, count)
 
         # Stage 5: Curator picks individual fragments from the full pool.
@@ -181,9 +180,7 @@ class Pipeline:
             "Stage 5 complete — {} fragment(s) selected from {} source(s).",
             len(fragments), len(selected_sources),
         )
-        source_frag_counts = {sid: 0 for sid in selected_source_ids}
-        for f in fragments:
-            source_frag_counts[f.source_id] += 1
+        source_frag_counts = Counter(f.source_id for f in fragments)
         for src in selected_sources:
             n = source_frag_counts[src.external_id]
             logger.debug("  {} fragment(s) from {} — {!r}", n, src.external_id, src.title)

@@ -35,7 +35,7 @@ Rules:
 """
 
 
-def agentic_composition(
+def llm_compose(
     anthropic_client: anthropic.AsyncAnthropic,
     model: str = _COMPOSER_MODEL,
 ) -> Callable[[PipelineState], Awaitable[CollageOutput]]:
@@ -96,7 +96,7 @@ def agentic_composition(
             + json.dumps(fragment_descs, indent=2)
         )
 
-        logger.debug("[agentic_composition] Requesting placements from LLM...")
+        logger.debug("[llm_compose] Requesting placements from LLM...")
         try:
             response = await anthropic_client.messages.create(
                 model=model,
@@ -107,12 +107,12 @@ def agentic_composition(
             raw = "".join(b.text for b in response.content if b.type == "text")
             placements = _parse_placements(raw)
             logger.debug(
-                "[agentic_composition] {} placement(s) received from LLM.",
+                "[llm_compose] {} placement(s) received from LLM.",
                 len(placements),
             )
         except Exception as exc:
             logger.warning(
-                "[agentic_composition] LLM call failed: {} — falling back to random placement.",
+                "[llm_compose] LLM call failed: {} — falling back to random placement.",
                 exc,
             )
             placements = {}
@@ -139,7 +139,7 @@ def _parse_placements(text: str) -> dict[str, dict]:
         data = json.loads(text)
         return data if isinstance(data, dict) else {}
     except json.JSONDecodeError:
-        logger.warning("[agentic_composition] Could not parse placement JSON.")
+        logger.warning("[llm_compose] Could not parse placement JSON.")
         return {}
 
 

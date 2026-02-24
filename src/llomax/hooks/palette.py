@@ -11,7 +11,7 @@ from llomax.core.hooks import PipelineState
 PaletteMode = Literal["pastel", "vivid", "vintage", "faded"]
 
 
-def agnostic_palette_matcher(
+def color_grade(
     mode: PaletteMode = "pastel",
 ) -> Callable[[PipelineState], Awaitable[None]]:
     """Return a ``pre_composition`` hook that applies a unified colour palette.
@@ -38,14 +38,14 @@ def agnostic_palette_matcher(
             state.background_image = _apply_palette(
                 state.background_image.convert("RGB"), mode
             )
-            logger.debug("[palette_matcher] Applied {!r} to background image.", mode)
+            logger.debug("[color_grade] Applied {!r} to background image.", mode)
 
         for frag in state.fragments:
             frag.image_rgba = _apply_palette(frag.image_rgba, mode)
 
         if state.fragments:
             logger.debug(
-                "[palette_matcher] Applied {!r} to {} fragment(s).",
+                "[color_grade] Applied {!r} to {} fragment(s).",
                 mode,
                 len(state.fragments),
             )

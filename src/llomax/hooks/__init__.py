@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-from llomax.hooks.agentic_composer import agentic_composition
 from llomax.hooks.background import select_best_background
-from llomax.hooks.palette import agnostic_palette_matcher
+from llomax.hooks.llm_composer import llm_compose
+from llomax.hooks.palette import color_grade
 
-__all__ = ["agentic_composition", "agnostic_palette_matcher", "select_best_background"]
+__all__ = ["color_grade", "llm_compose", "select_best_background"]

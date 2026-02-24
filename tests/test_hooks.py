@@ -6,9 +6,9 @@ from unittest.mock import AsyncMock, MagicMock
 from PIL import Image
 
 from llomax.core.hooks import HookManager, PipelineState
-from llomax.hooks.agentic_composer import _parse_placements, agentic_composition
 from llomax.hooks.background import select_best_background
-from llomax.hooks.palette import _apply_palette, agnostic_palette_matcher
+from llomax.hooks.llm_composer import _parse_placements, llm_compose
+from llomax.hooks.palette import _apply_palette, color_grade
 from llomax.models import CollageOutput, Fragment, SourceImage
 
 
@@ -168,23 +168,23 @@ class TestSelectBestBackground:
 
 
 # ---------------------------------------------------------------------------
-# agnostic_palette_matcher
+# color_grade
 # ---------------------------------------------------------------------------
 
 
-class TestAgnosticPaletteMatcher:
+class TestColorGrade:
     async def test_transforms_fragment_rgba(self):
         frag = _make_fragment("src1")
         original = list(frag.image_rgba.get_flattened_data())
         state = _make_state(fragments=[frag])
-        await agnostic_palette_matcher("pastel")(state)
+        await color_grade("pastel")(state)
         assert list(state.fragments[0].image_rgba.get_flattened_data()) != original
 
     async def test_preserves_alpha_channel(self):
         frag = _make_fragment("src1")
         original_alpha = [p[3] for p in frag.image_rgba.get_flattened_data()]
         state = _make_state(fragments=[frag])
-        await agnostic_palette_matcher("vintage")(state)
+        await color_grade("vintage")(state)
         new_alpha = [p[3] for p in state.fragments[0].image_rgba.get_flattened_data()]
         assert new_alpha == original_alpha
 
@@ -193,7 +193,7 @@ class TestAgnosticPaletteMatcher:
         original = list(bg.get_flattened_data())
         state = _make_state()
         state.background_image = bg
-        await agnostic_palette_matcher("vivid")(state)
+        await color_grade("vivid")(state)
         assert list(state.background_image.get_flattened_data()) != original
 
     async def test_all_modes_run_without_error(self):
@@ -201,13 +201,13 @@ class TestAgnosticPaletteMatcher:
             frag = _make_fragment("src1")
             state = _make_state(fragments=[frag])
             state.background_image = Image.new("RGB", (50, 50), (100, 100, 100))
-            await agnostic_palette_matcher(mode)(state)  # type: ignore[arg-type]
+            await color_grade(mode)(state)  # type: ignore[arg-type]
 
     async def test_no_crash_without_background(self):
         frag = _make_fragment("src1")
         state = _make_state(fragments=[frag])
         assert state.background_image is None
-        await agnostic_palette_matcher("faded")(state)  # must not raise
+        await color_grade("faded")(state)  # must not raise
 
     def test_apply_palette_preserves_alpha_directly(self):
         img = Image.new("RGBA", (10, 10), (100, 150, 200, 128))
@@ -219,11 +219,11 @@ class TestAgnosticPaletteMatcher:
 
 
 # ---------------------------------------------------------------------------
-# agentic_composition
+# llm_compose
 # ---------------------------------------------------------------------------
 
 
-class TestAgenticComposition:
+class TestLlmCompose:
     def _placement_json(
         self, frag: Fragment, x: int = 10, y: int = 20, scale: float = 1.0
     ) -> str:
@@ -234,7 +234,7 @@ class TestAgenticComposition:
     async def test_returns_collage_output(self):
         frag = _make_fragment("src1")
         state = _make_state(sources=[_make_source("src1")], fragments=[frag])
-        hook = agentic_composition(_mock_anthropic(self._placement_json(frag)))
+        hook = llm_compose(_mock_anthropic(self._placement_json(frag)))
         result = await hook(state)
         assert isinstance(result, CollageOutput)
         assert result.width == 200
@@ -243,14 +243,14 @@ class TestAgenticComposition:
     async def test_uses_llm_placement(self):
         frag = _make_fragment("src1", w=20, h=20)
         state = _make_state(sources=[_make_source("src1")], fragments=[frag])
-        hook = agentic_composition(_mock_anthropic(self._placement_json(frag, x=50, y=60)))
+        hook = llm_compose(_mock_anthropic(self._placement_json(frag, x=50, y=60)))
         result = await hook(state)
         assert result.fragment_provenance[0]["position"] == [50, 60]
 
     async def test_fallback_to_random_on_invalid_json(self):
         frag = _make_fragment("src1")
         state = _make_state(sources=[_make_source("src1")], fragments=[frag])
-        hook = agentic_composition(_mock_anthropic("this is not json"))
+        hook = llm_compose(_mock_anthropic("this is not json"))
         result = await hook(state)  # must not raise
         assert isinstance(result, CollageOutput)
         assert len(result.fragment_provenance) == 1
@@ -261,7 +261,7 @@ class TestAgenticComposition:
         payload = json.dumps(
             {frag.fragment_id: {"x": 0, "y": 0, "scale": 0.5, "reason": "small"}}
         )
-        hook = agentic_composition(_mock_anthropic(payload))
+        hook = llm_compose(_mock_anthropic(payload))
         result = await hook(state)
         assert result.fragment_provenance[0]["scale"] == 0.5
 
@@ -270,7 +270,7 @@ class TestAgenticComposition:
         state = _make_state(sources=[_make_source("src1")], fragments=[frag])
         client = AsyncMock()
         client.messages.create = AsyncMock(side_effect=Exception("API error"))
-        result = await agentic_composition(client)(state)  # must not raise
+        result = await llm_compose(client)(state)  # must not raise
         assert isinstance(result, CollageOutput)
 
     def test_parse_placements_strips_markdown_fences(self):

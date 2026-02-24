@@ -73,7 +73,7 @@ async def select_fragments(
     )
 
     text = "".join(block.text for block in response.content if block.type == "text")
-    return _parse_identifiers(text)
+    return _parse_fragment_ids(text)
 
 
 def _fragment_summary(fragment: Fragment, source: SourceImage | None) -> dict:
@@ -102,7 +102,7 @@ def _fragment_summary(fragment: Fragment, source: SourceImage | None) -> dict:
     }
 
 
-def _strip_markdown_fences(text: str) -> str:
+def _strip_fences(text: str) -> str:
     """Remove markdown code fences wrapping a string.
 
     Args:
@@ -119,16 +119,16 @@ def _strip_markdown_fences(text: str) -> str:
     return text.strip()
 
 
-def _parse_identifiers(text: str) -> list[str]:
-    """Parse a JSON array of identifier strings from raw LLM output.
+def _parse_fragment_ids(text: str) -> list[str]:
+    """Parse a JSON array of fragment ID strings from raw LLM output.
 
     Args:
         text: Raw LLM response text, possibly wrapped in markdown fences.
 
     Returns:
-        List of valid string identifiers. Empty list on parse failure.
+        List of valid string fragment IDs. Empty list on parse failure.
     """
-    cleaned = _strip_markdown_fences(text)
+    cleaned = _strip_fences(text)
     selected = json.loads(cleaned)
     if not isinstance(selected, list):
         return []
